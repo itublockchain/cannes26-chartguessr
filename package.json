@@ -1,0 +1,20 @@
+{
+  "name": "cannes26-monorepo",
+  "private": true,
+  "version": "1.0.0",
+  "license": "MIT",
+  "packageManager": "yarn@1.22.22",
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  },
+  "scripts": {
+    "dev": "concurrently -n FE,BE -c cyan,magenta \"yarn workspace frontend dev\" \"yarn workspace backend dev\"",
+    "build": "yarn workspace frontend build",
+    "lint": "yarn workspace frontend lint",
+    "preview": "yarn workspace frontend preview"
+  }
+}
