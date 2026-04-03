@@ -10,8 +10,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@dynamic-labs/ethereum": "^4.74.1",
+    "@dynamic-labs/sdk-react-core": "^4.74.1",
+    "@dynamic-labs/solana": "^4.74.1",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react-dom": "^19.2.4",
+    "viem": "^2.47.6"
   },
   "devDependencies": {
     "@babel/core": "^7.29.0",
