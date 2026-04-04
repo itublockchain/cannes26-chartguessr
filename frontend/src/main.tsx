@@ -38,7 +38,7 @@ createRoot(document.getElementById('root')!).render(
             border-radius: 999px !important;
             padding: 0 16px !important;
             height: 38px !important;
-            font-family: 'Neue Haas Grotesk Display', sans-serif !important;
+            font-family: 'Satoshi', sans-serif !important;
             font-size: 12px !important;
             color: rgba(255,255,255,0.4) !important;
             backdrop-filter: none !important;
@@ -55,7 +55,7 @@ createRoot(document.getElementById('root')!).render(
           .dynamic-widget-inline-controls span,
           .dynamic-widget-inline-controls p,
           .dynamic-widget-inline-controls div {
-            font-family: 'Neue Haas Grotesk Display', sans-serif !important;
+            font-family: 'Satoshi', sans-serif !important;
             font-size: 13px !important;
             font-weight: 500 !important;
             color: rgba(255,255,255,0.9) !important;
@@ -66,7 +66,7 @@ createRoot(document.getElementById('root')!).render(
             border-radius: 999px !important;
             padding: 0 20px !important;
             height: 38px !important;
-            font-family: 'Neue Haas Grotesk Display', sans-serif !important;
+            font-family: 'Satoshi', sans-serif !important;
             font-size: 13px !important;
             font-weight: 500 !important;
             color: rgba(255,255,255,0.9) !important;
