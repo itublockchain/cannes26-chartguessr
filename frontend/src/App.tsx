@@ -8,6 +8,7 @@ import { Dashboard } from './components/Dashboard'
 import { Connect } from './components/Connect'
 import { Game } from './components/Game'
 import { Header } from './components/Header'
+import { SmoothChart } from './components/SmoothChart/SmoothChart'
 
 export interface UserProfile {
   nickname: string;
@@ -32,6 +33,9 @@ function App() {
   // Centralized redirect logic
   useEffect(() => {
     if (!sdkHasLoaded || loading) return
+
+    // Exempt /smooth-chart from redirect logic
+    if (location.pathname === '/smooth-chart') return
 
     if (!primaryWallet && location.pathname !== '/connect') {
       navigate('/connect', { replace: true })
@@ -71,6 +75,7 @@ function App() {
         />
         <Route path="/" element={<div className="absolute inset-0 flex flex-col"><Header /><Dashboard profile={profile} /></div>} />
         <Route path="/game" element={<div className="absolute inset-0 flex flex-col"><Header /><Game profile={profile} /></div>} />
+        <Route path="/smooth-chart" element={<SmoothChart />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </SSEProvider>
