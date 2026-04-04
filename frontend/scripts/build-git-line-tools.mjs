@@ -5,11 +5,6 @@ import { fileURLToPath } from "node:url";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 
-/**
- * Git line-tool packages run `npm install` locally, which nests lightweight-charts@5.0.x
- * under the package while the app uses hoisted 5.1.x. Two copies produce incompatible
- * IChartApiBase / HorzScaleOptions typings and break `tsc` + typedoc.
- */
 function pruneNestedLightweightCharts(packageRoot) {
   const walk = (dir) => {
     const nm = join(dir, "node_modules");
@@ -21,12 +16,16 @@ function pruneNestedLightweightCharts(packageRoot) {
     for (const name of readdirSync(nm)) {
       if (name === ".bin") continue;
       const child = join(nm, name);
-      if (statSync(child).isDirectory()) {
-        walk(child);
-      }
+      try {
+        if (statSync(child).isDirectory()) {
+          walk(child);
+        }
+      } catch (e) {}
     }
   };
-  walk(packageRoot);
+  try {
+    walk(packageRoot);
+  } catch (e) {}
 }
 
 const packages = [
@@ -49,23 +48,40 @@ const packages = [
 ];
 
 for (const { name, distFile } of packages) {
-  const pkgDir = join(root, "node_modules", name);
-  const distPath = join(pkgDir, distFile);
-  if (existsSync(distPath)) continue;
-  if (!existsSync(join(pkgDir, "package.json"))) {
-    console.warn(`[postinstall] skip ${name}: not installed`);
+  // Find where it is installed. It might be in frontend/node_modules or ../node_modules
+  const localPkgDir = join(root, "node_modules", name);
+  const rootPkgDir = join(root, "..", "node_modules", name);
+  
+  let pkgDir = "";
+  if (existsSync(localPkgDir)) {
+    pkgDir = localPkgDir;
+  } else if (existsSync(rootPkgDir)) {
+    pkgDir = rootPkgDir;
+  }
+
+  if (!pkgDir) {
+    console.warn(`[postinstall] skip ${name}: not found in node_modules`);
     continue;
   }
-  console.log(`[postinstall] building ${name} (Git dep has no prebuilt dist)…`);
-  execSync("npm install", {
-    cwd: pkgDir,
-    stdio: "inherit",
-    env: { ...process.env, npm_config_ignore_scripts: "false" },
-  });
-  pruneNestedLightweightCharts(pkgDir);
-  execSync("npm run build", {
-    cwd: pkgDir,
-    stdio: "inherit",
-    env: { ...process.env, npm_config_ignore_scripts: "false" },
-  });
+
+  const distPath = join(pkgDir, distFile);
+  if (existsSync(distPath)) {
+    console.log(`[postinstall] ${name} already built.`);
+    continue;
+  }
+
+  console.log(`[postinstall] building ${name} at ${pkgDir}...`);
+  try {
+    execSync("bun install", {
+      cwd: pkgDir,
+      stdio: "inherit",
+    });
+    pruneNestedLightweightCharts(pkgDir);
+    execSync("bun run build", {
+      cwd: pkgDir,
+      stdio: "inherit",
+    });
+  } catch (e) {
+    console.error(`[postinstall] failed to build ${name}:`, e.message);
+  }
 }

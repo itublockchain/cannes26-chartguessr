@@ -13,15 +13,12 @@ export default defineConfig({
   resolve: {
     dedupe: [
       "lightweight-charts",
-      "lightweight-charts-line-tools-core",
-      "lightweight-charts-line-tools-lines",
-      "lightweight-charts-line-tools-freehand",
-      "lightweight-charts-line-tools-fib-retracement",
     ],
+
   },
   optimizeDeps: {
-    include: [
-      "lightweight-charts",
+    // Exclude line‑tools; Vite will load them directly from source
+    exclude: [
       "lightweight-charts-line-tools-core",
       "lightweight-charts-line-tools-lines",
       "lightweight-charts-line-tools-freehand",
