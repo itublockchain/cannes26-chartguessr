@@ -61,6 +61,13 @@ createRoot(document.getElementById('root')!).render(
             background: rgba(99,156,230,0.24) !important;
             border-color: rgba(99,156,230,0.5) !important;
           }
+          .dynamic-widget-inline-controls svg,
+          .dynamic-widget-inline-controls svg path,
+          .dynamic-widget-inline-controls svg circle {
+            fill: white !important;
+            stroke: white !important;
+            color: white !important;
+          }
         `,
       }}
     >
