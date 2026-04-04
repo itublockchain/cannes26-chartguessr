@@ -126,11 +126,11 @@ export function useChartSetup(
       kineticScroll: { touch: false, mouse: false },
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#d6dde8",
+        textColor: "#334155",
       },
       grid: {
-        vertLines: { color: "rgba(255, 255, 255, 0.04)" },
-        horzLines: { color: "rgba(255, 255, 255, 0.04)" },
+        vertLines: { color: "rgba(0, 0, 0, 0.04)" },
+        horzLines: { color: "rgba(0, 0, 0, 0.04)" },
       },
       crosshair: {
         vertLine: { visible: false },
@@ -138,12 +138,12 @@ export function useChartSetup(
       },
       rightPriceScale: {
         visible: !hideRightPriceScale,
-        borderColor: "rgba(255, 255, 255, 0.1)",
+        borderColor: "rgba(0, 0, 0, 0.1)",
         scaleMargins: { top: 0.2, bottom: 0.2 },
         autoScale: false,
       },
       timeScale: {
-        borderColor: "rgba(255, 255, 255, 0.1)",
+        borderColor: "rgba(0, 0, 0, 0.1)",
         secondsVisible: true,
         timeVisible: true,
         shiftVisibleRangeOnNewBar: false,
