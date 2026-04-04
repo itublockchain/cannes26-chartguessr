@@ -109,7 +109,7 @@ Bağlantı açıldıktan sonra backend aşağıdaki event'leri push eder:
 | `player_entered` | `{ matchId, player }` | Bir oyuncu USDC deposit etti (enterMatch tx) |
 | `match_locked` | `{ matchId }` | İki oyuncu da deposit etti |
 | `game_starting` | `{ matchId, startPrice, duration }` | Oyun başlıyor, çizim süresi başladı |
-| `price_tick` | `{ matchId, price, timestamp }` | Gerçek zamanlı BTC/USD fiyatı (her ~1s) |
+| `price_tick` | `{ matchId, report }` | Gerçek zamanlı BTC/USD (Chainlink V3 schema, her ~1s) |
 | `drawing_submitted` | `{ matchId, player }` | Bir oyuncu çizimini gönderdi |
 | `calculating` | `{ matchId }` | Çizim süresi bitti, skor hesaplanıyor |
 | `result` | `{ matchId, winner, player1Score, player2Score, payout, startPrice, endPrice }` | Kazanan belli, USDC transfer edildi |
@@ -180,6 +180,27 @@ POST /match/draw/submit ──────→  Çizimi DB'ye kaydet
 | **Escrow** | `0xb86a5423a4e0c2709491d51de51de655b94f2572` |
 | **Explorer** | `https://testnet.arcscan.app` |
 | **Faucet** | `https://faucet.circle.com` (Arc Testnet seç) |
+
+---
+
+## Price Report Schema (Chainlink Data Streams V3)
+
+`price_tick` SSE event'inde gelen `report` objesi:
+
+```json
+{
+  "feedID": "0x00039d9e45394f473ab1f050a1b963e6b05351e52d71e507509ada0c95ed75b8",
+  "validFromTimestamp": 1775250794,
+  "observationsTimestamp": 1775250794,
+  "price": "66745112455374850000000",
+  "bid": "66740341634272120000000",
+  "ask": "66750000000000000000000"
+}
+```
+
+- `price`, `bid`, `ask`: int192 string, 18 decimals. Gerçek fiyat = `Number(price) / 1e18`
+- `observationsTimestamp`: Unix seconds
+- Şu an Binance'ten üretiliyor, Chainlink erişimi gelince aynı schema ile geçiş yapılacak
 
 ---
 

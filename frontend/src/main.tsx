@@ -3,18 +3,34 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { DynamicContextProvider } from '@dynamic-labs/sdk-react-core'
 import { EthereumWalletConnectors } from '@dynamic-labs/ethereum'
-import { SolanaWalletConnectors } from '@dynamic-labs/solana'
 import './index.css'
 import App from './App.tsx'
+
+const ARC_TESTNET_CHAIN_ID = 5042002
+
+const arcTestnet = {
+  chainId: ARC_TESTNET_CHAIN_ID,
+  networkId: ARC_TESTNET_CHAIN_ID,
+  name: 'Arc Testnet',
+  vanityName: 'Arc Testnet',
+  isTestnet: true,
+  nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 6 },
+  rpcUrls: ['https://rpc.testnet.arc.network'],
+  blockExplorerUrls: [],
+  iconUrls: [],
+}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <DynamicContextProvider
       settings={{
         environmentId: import.meta.env.VITE_DYNAMIC_ENVIRONMENT_ID,
-        walletConnectors: [EthereumWalletConnectors, SolanaWalletConnectors],
-        initialAuthenticationMode: 'connect-only',
+        walletConnectors: [EthereumWalletConnectors],
+        initialAuthenticationMode: 'connect-and-sign',
         shadowDOMEnabled: false,
+        overrides: {
+          evmNetworks: [arcTestnet],
+        },
         cssOverrides: `
           .dynamic-widget-inline-controls {
             background: rgba(255,255,255,0.05) !important;

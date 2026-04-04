@@ -14,10 +14,12 @@ export interface UserProfile {
   avatar: string;
 }
 
+const ARC_TESTNET_CHAIN_ID = 5042002
+
 function App() {
   // Keeps server-sent events alive
   useGameStateSSE()
-  
+
   const { primaryWallet } = useDynamicContext()
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [cardScale, setCardScale] = useState(1)
@@ -35,6 +37,13 @@ function App() {
     window.addEventListener('resize', updateScale)
     return () => window.removeEventListener('resize', updateScale)
   }, [updateScale])
+
+  // Auto-switch to ARC Testnet when wallet connects
+  useEffect(() => {
+    if (primaryWallet) {
+      primaryWallet.switchNetwork(ARC_TESTNET_CHAIN_ID).catch(console.error)
+    }
+  }, [primaryWallet])
 
   // Centralized redirect logic for guarding routes based on authentication state
   useEffect(() => {
