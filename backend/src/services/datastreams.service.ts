@@ -14,13 +14,19 @@
 //   stream.on("report", (report: any) => {
 //     const decoded = decodeReport(report.fullReport, report.feedID);
 //     if ("price" in decoded) {
-//       const price = Number(decoded.price) / 1e18;
-//       onPrice(price, report.observationsTimestamp);
+//       onReport({
+//         feedID: report.feedID,
+//         validFromTimestamp: report.validFromTimestamp,
+//         observationsTimestamp: report.observationsTimestamp,
+//         price: decoded.price.toString(),
+//         bid: (decoded as any).bid.toString(),
+//         ask: (decoded as any).ask.toString(),
+//       });
 //     }
 //   });
 //
 //   stream.on("error", (err: Error) => {
-//     console.error("[datastreams] Stream error:", err);
+//     console.error("[price] Stream error:", err);
 //   });
 //
 //   await stream.connect();
@@ -28,16 +34,27 @@
 // ──────────────────────────────────────────────────────────
 
 import { env } from "../config/env.js";
-import type { PricePoint } from "../types/index.js";
+import type { PriceReport, PricePoint } from "../types/index.js";
 import * as sseService from "./sse.service.js";
 
+const BTC_USD_FEED_ID = env.btcUsdFeedId || "0x00039d9e45394f473ab1f050a1b963e6b05351e52d71e507509ada0c95ed75b8";
+const DECIMALS = 1e18;
+
 const matchBuffers = new Map<string, PricePoint[]>();
-let latestPrice: PricePoint | null = null;
+let latestReport: PriceReport | null = null;
 let logCounter = 0;
 let ws: WebSocket | null = null;
 
+export function getLatestReport(): PriceReport | null {
+  return latestReport;
+}
+
 export function getLatestPrice(): PricePoint | null {
-  return latestPrice;
+  if (!latestReport) return null;
+  return {
+    timestamp: latestReport.observationsTimestamp,
+    price: Number(latestReport.price) / DECIMALS,
+  };
 }
 
 export function startBuffer(matchId: string): void {
@@ -54,8 +71,14 @@ export function getBuffer(matchId: string): PricePoint[] {
   return matchBuffers.get(matchId) || [];
 }
 
-function onPrice(price: number, timestamp: number) {
-  latestPrice = { price, timestamp };
+/**
+ * Central handler — all sources (Chainlink or Binance) produce a PriceReport.
+ */
+function onReport(report: PriceReport) {
+  latestReport = report;
+
+  const price = Number(report.price) / DECIMALS;
+  const timestamp = report.observationsTimestamp;
 
   if (logCounter++ % 10 === 0) {
     console.log(`[price] BTC/USD $${price.toFixed(2)} @ ${new Date(timestamp * 1000).toISOString()}`);
@@ -63,8 +86,28 @@ function onPrice(price: number, timestamp: number) {
 
   for (const [matchId, buffer] of matchBuffers.entries()) {
     buffer.push({ price, timestamp });
-    sseService.broadcast("price_tick", { matchId, price, timestamp });
+    sseService.broadcast("price_tick", { matchId, report });
   }
+}
+
+/**
+ * Convert Binance kline data to Chainlink V3 Report schema.
+ */
+function binanceToReport(data: any): PriceReport {
+  const close = parseFloat(data.k.c);
+  const high = parseFloat(data.k.h);
+  const low = parseFloat(data.k.l);
+  const timestamp = Math.floor(data.k.t / 1000);
+
+  // Map to V3 schema: price=close, bid=low, ask=high (best approximation)
+  return {
+    feedID: BTC_USD_FEED_ID,
+    validFromTimestamp: timestamp,
+    observationsTimestamp: timestamp,
+    price: BigInt(Math.round(close * DECIMALS)).toString(),
+    bid: BigInt(Math.round(low * DECIMALS)).toString(),
+    ask: BigInt(Math.round(high * DECIMALS)).toString(),
+  };
 }
 
 export function init(): void {
@@ -75,9 +118,7 @@ export function init(): void {
       try {
         const data = JSON.parse(event.data as string);
         if (data.k) {
-          const price = parseFloat(data.k.c);
-          const timestamp = Math.floor(data.k.t / 1000);
-          onPrice(price, timestamp);
+          onReport(binanceToReport(data));
         }
       } catch {
         // ignore parse errors

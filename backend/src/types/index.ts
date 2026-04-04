@@ -1,3 +1,14 @@
+// Matches Chainlink Data Streams V3 Report schema (Crypto Streams)
+export interface PriceReport {
+  feedID: string;
+  validFromTimestamp: number;
+  observationsTimestamp: number;
+  price: string;       // int192 as string (18 decimals)
+  bid: string;         // int192 as string (18 decimals)
+  ask: string;         // int192 as string (18 decimals)
+}
+
+// Simplified price point for buffers and scoring
 export interface PricePoint {
   timestamp: number;
   price: number;
