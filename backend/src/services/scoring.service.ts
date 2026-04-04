@@ -1,6 +1,12 @@
 import { prisma } from "../config/prisma.js";
 import type { DrawingPoint, PricePoint, ScoreResult } from "../types/index.js";
 
+type MatchDrawingForScore = {
+  userId: string;
+  pathData: unknown;
+  submittedAt: Date;
+};
+
 const DRAW_THRESHOLD = 0.01;
 const MIN_COVERAGE = 0.9; // Drawing must cover at least 90% of the game duration
 const GAME_DURATION = 60; // seconds
@@ -24,8 +30,8 @@ export async function calculateScore(
 
   const actualCurve = match.priceBuffer as unknown as PricePoint[];
 
-  const p1Drawing = match.drawings.find((d) => d.userId === match.player1Id);
-  const p2Drawing = match.drawings.find((d) => d.userId === match.player2Id);
+  const p1Drawing = match.drawings.find((d: MatchDrawingForScore) => d.userId === match.player1Id);
+  const p2Drawing = match.drawings.find((d: MatchDrawingForScore) => d.userId === match.player2Id);
 
   const p1Path = p1Drawing ? (p1Drawing.pathData as unknown as DrawingPoint[]) : null;
   const p2Path = p2Drawing ? (p2Drawing.pathData as unknown as DrawingPoint[]) : null;
