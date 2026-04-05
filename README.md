@@ -1,5 +1,5 @@
 <p align="center">
-    <img src="frontend/public/finding.svg" alt="ChartGuessr Banner" width="200" height="200" />
+    <img src="frontend/public/chartguesser-logo.svg" alt="ChartGuessr Banner" width="800" height="200" />
     <h1 align="center">ChartGuessr</h1>
 </p>
 
