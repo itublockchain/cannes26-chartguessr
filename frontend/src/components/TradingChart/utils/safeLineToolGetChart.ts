@@ -11,8 +11,12 @@ let patched = false;
  * is null (same teardown / HMR scenario — the horizontal-line tool tries to read viewport
  * bounds via `getSeries().priceScale()` after the series has already been removed).
  *
- * This patches both methods to return `null` instead of throwing, which causes
- * downstream culling / viewport / destroy code to bail out gracefully.
+ * `pointToScreenPoint` / `screenPointToPoint` use `this._chart.timeScale()` directly (not
+ * `getChart()`), so they still throw when `_chart` or `_series` is cleared — e.g. HorizontalLine
+ * during paint.teardown. Guards return `null` like `getChart()` errors downstream expect.
+ *
+ * Call `ensureSafeLineToolGetChart()` **before** `ensureFreehandPointToScreenClamped()` so freehand's
+ * captured `orig` chains through these guards.
  */
 export function ensureSafeLineToolGetChart(): void {
   if (patched) return;
@@ -22,9 +26,33 @@ export function ensureSafeLineToolGetChart(): void {
     getChart: () => unknown;
     getSeries: () => unknown;
     destroy: () => void;
+    pointToScreenPoint: (point: unknown) => unknown;
+    screenPointToPoint: (point: unknown) => unknown;
     _chart?: unknown;
     _series?: unknown;
   };
+
+  // --- safe pointToScreenPoint / screenPointToPoint (use _chart directly) ---
+  const originalPointToScreen = proto.pointToScreenPoint;
+  const originalScreenToPoint = proto.screenPointToPoint;
+  if (typeof originalPointToScreen === "function") {
+    proto.pointToScreenPoint = function safePointToScreen(
+      this: typeof proto,
+      point: unknown,
+    ) {
+      if (!this._chart || !this._series) return null;
+      return originalPointToScreen.call(this, point);
+    };
+  }
+  if (typeof originalScreenToPoint === "function") {
+    proto.screenPointToPoint = function safeScreenToPoint(
+      this: typeof proto,
+      point: unknown,
+    ) {
+      if (!this._chart || !this._series) return null;
+      return originalScreenToPoint.call(this, point);
+    };
+  }
 
   // --- safe getChart ---
   const originalGetChart = proto.getChart;

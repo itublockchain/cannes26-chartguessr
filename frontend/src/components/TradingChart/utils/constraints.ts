@@ -1,3 +1,5 @@
+import type { MutableRefObject } from "react";
+import type { IChartApi } from "lightweight-charts";
 import {
   LineToolBrush,
   LineToolHighlighter,
@@ -37,32 +39,71 @@ function removeOtherFinishedOfSameType(
   if (ids.length > 0) lineTools.removeLineToolsById(ids);
 }
 
-/**
- * Fırça: çizim anı (canlı mum) genelde tahmin penceresinde veya Shift+B chart debug açıkken;
- * noktalar [tTah … tBrushEnd] unix / ilgili mantıksal bar bandında.
- */
-export function applyDrawingConstraints(
+/** Per-chart refs so multiple TradingChart instances / StrictMode remounts don’t share one closure. */
+export type DrawingConstraintContext = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  lineToolsRef: React.MutableRefObject<any>,
-  gameStartTimeRef: React.MutableRefObject<number | null>,
-  gameObservationEndTimeRef: React.MutableRefObject<number | null>,
-  gameTahminEndTimeRef: React.MutableRefObject<number | null>,
-  gameBrushZoneEndTimeRef: React.MutableRefObject<number | null>,
-  gameStartLogicalRef: React.MutableRefObject<number | null>,
-  lastTimeRef: React.MutableRefObject<number | null>,
-  gameConfigRef: React.MutableRefObject<ResolvedTradingChartGameConfig>,
-  /** Shift+B “chart debug”: faz kilidi olmadan fırça (koordinat bandı geçerli) */
-  chartDebugModeRef: React.MutableRefObject<boolean>,
-  /** SSE-driven drawing phase: bypass candle-timestamp temporal gate */
-  externalDrawingPhaseRef?: React.MutableRefObject<boolean>,
-) {
+  lineToolsRef: MutableRefObject<any>;
+  gameStartTimeRef: MutableRefObject<number | null>;
+  gameObservationEndTimeRef: MutableRefObject<number | null>;
+  gameTahminEndTimeRef: MutableRefObject<number | null>;
+  gameBrushZoneEndTimeRef: MutableRefObject<number | null>;
+  gameStartLogicalRef: MutableRefObject<number | null>;
+  lastTimeRef: MutableRefObject<number | null>;
+  gameConfigRef: MutableRefObject<ResolvedTradingChartGameConfig>;
+  chartDebugModeRef: MutableRefObject<boolean>;
+  externalDrawingPhaseRef?: MutableRefObject<boolean>;
+};
+
+const constraintByChart = new WeakMap<IChartApi, DrawingConstraintContext>();
+
+export function registerDrawingConstraintContext(
+  chart: IChartApi,
+  ctx: DrawingConstraintContext,
+): void {
+  constraintByChart.set(chart, ctx);
+}
+
+export function unregisterDrawingConstraintContext(chart: IChartApi): void {
+  constraintByChart.delete(chart);
+}
+
+function getCtxForTool(tool: {
+  _chart?: IChartApi | null;
+}): DrawingConstraintContext | null {
+  const ch = tool._chart;
+  if (!ch) return null;
+  return constraintByChart.get(ch) ?? null;
+}
+
+let prototypePatchInstalled = false;
+
+function ensureBrushPrototypePatch(): void {
+  if (prototypePatchInstalled) return;
+  prototypePatchInstalled = true;
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const patchAddPoint = (proto: any) => {
-    if (proto._isPatchedForBounds) return;
     const originalAddPoint = proto.addPoint;
-    proto._isPatchedForBounds = true;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     proto.addPoint = function (newPoint: any) {
+      const ctx = getCtxForTool(this);
+      if (!ctx) {
+        return originalAddPoint.call(this, newPoint);
+      }
+
+      const {
+        lineToolsRef,
+        gameStartTimeRef,
+        gameObservationEndTimeRef,
+        gameTahminEndTimeRef,
+        gameBrushZoneEndTimeRef,
+        gameStartLogicalRef,
+        lastTimeRef,
+        gameConfigRef,
+        chartDebugModeRef,
+        externalDrawingPhaseRef,
+      } = ctx;
+
       if (
         lineToolsRef.current &&
         isReplaceOnNewStrokeKind(this.toolType)
@@ -102,12 +143,9 @@ export function applyDrawingConstraints(
         ) {
           return false;
         }
-        // When SSE says we're in drawing phase, bypass candle-timestamp temporal gate
         const externalDrawing = externalDrawingPhaseRef?.current === true;
-        // Chart debug (Shift+B): faz kilidi yok. Kapalı: yalnızca tahmin penceresi (phase 2).
         if (!externalDrawing && !chartDebugModeRef.current && (lt === null || lt < tObs || lt >= tTah)) return false;
 
-        // Drawing is constrained to the right side: [tObs, tBrushEnd]
         const isUnixTs = ts > 1_000_000_000;
         if (isUnixTs) {
           return ts >= tObs && ts <= tBrushEnd;
@@ -229,4 +267,18 @@ export function applyDrawingConstraints(
 
   if (LineToolBrush) patchAddPoint(LineToolBrush.prototype);
   if (LineToolHighlighter) patchAddPoint(LineToolHighlighter.prototype);
+}
+
+/**
+ * Fırça: çizim anı (canlı mum) genelde tahmin penceresinde veya Shift+B chart debug açıkken;
+ * noktalar [tTah … tBrushEnd] unix / ilgili mantıksal bar bandında.
+ *
+ * `chart` ile kayıt: aynı sayfada birden fazla grafik veya remount’ta doğru lineToolsRef kullanılır.
+ */
+export function applyDrawingConstraints(
+  chart: IChartApi,
+  ctx: DrawingConstraintContext,
+): void {
+  ensureBrushPrototypePatch();
+  registerDrawingConstraintContext(chart, ctx);
 }

@@ -42,7 +42,10 @@ import {
 import { useGameLogic } from "./hooks/useGameLogic";
 import type { ChartDualSync } from "./hooks/useMirrorWebSocket";
 import type { OpponentMirrorChartProps } from "./OpponentMirrorChart";
-import { applyDrawingConstraints } from "./utils/constraints";
+import {
+  applyDrawingConstraints,
+  unregisterDrawingConstraintContext,
+} from "./utils/constraints";
 import { redrawDevDrawingPointsCanvas } from "./utils/devDrawingPointsCanvas";
 import { buildPaneDualSync } from "./utils/buildPaneDualSync";
 import { cn } from "./utils/cn";
@@ -553,9 +556,10 @@ export function TradingChart({
   }, [isLocked, updateOverlays]);
 
   useEffect(() => {
-    if (!chartRef.current || !seriesRef.current) return;
+    const chart = chartRef.current;
+    if (!chart || !seriesRef.current) return;
 
-    applyDrawingConstraints(
+    applyDrawingConstraints(chart, {
       lineToolsRef,
       gameStartTimeRef,
       gameObservationEndTimeRef,
@@ -566,7 +570,7 @@ export function TradingChart({
       gameConfigRef,
       chartDebugModeRef,
       externalDrawingPhaseRef,
-    );
+    });
     initLineTools();
 
     queueMicrotask(() => {
@@ -576,6 +580,7 @@ export function TradingChart({
     });
 
     return () => {
+      unregisterDrawingConstraintContext(chart);
       cleanup();
       restoredGameStartRef.current = null;
       drawingUndoStackRef.current = [];

@@ -17,8 +17,8 @@ import {
 import { ensureSafeLineToolGetChart } from "../utils/safeLineToolGetChart";
 
 ensurePolygonRendererClippedToPane();
-ensureFreehandPointToScreenClamped();
 ensureSafeLineToolGetChart();
+ensureFreehandPointToScreenClamped();
 
 /* Suppress noisy "[BaseLineTool] _requestUpdate is not set" warnings from line-tools-core.
    These fire harmlessly during HMR/teardown when a tool briefly outlives its chart binding. */

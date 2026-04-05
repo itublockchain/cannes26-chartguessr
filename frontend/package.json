@@ -4,11 +4,12 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "postinstall": "node scripts/build-git-line-tools.mjs",
+    "postinstall": "node scripts/build-git-line-tools.mjs && node scripts/patch-line-tools-core.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "install": "npm install"
   },
   "dependencies": {
     "@dynamic-labs/ethereum": "^4.74.1",

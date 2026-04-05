@@ -95,6 +95,13 @@ export function useChartSetup(
     const container = containerRef.current;
     if (!container) return;
 
+    /**
+     * React Strict Mode remounts before a deferred `chart.remove()` runs; LW would append a second
+     * chart into the same div. Clearing keeps one chart per container. Deferred remove still
+     * disposes the previous chart API object.
+     */
+    container.replaceChildren();
+
     const { clientWidth, clientHeight } = container;
 
     /** Oyun penceresi setVisibleLogicalRange ile yatayda sınırlı; fiyat bandı kodla sabit — eksende dikey kaydırma yok. */
@@ -210,21 +217,54 @@ export function useChartSetup(
 
     return () => {
       resizeObserver.disconnect();
-      // Remove all attached primitives (line tools) before destroying the chart
-      // to prevent "Chart API not available" errors during teardown paint cycles.
+
+      // Stop last-price animation so LW does not schedule another paint after teardown starts.
       try {
-        const s = seriesRef.current;
-        if (s) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const primitives = (s as any).attachedPrimitives?.() ?? [];
-          for (const p of primitives) {
-            try { s.detachPrimitive(p); } catch { /* ignore */ }
+        series.applyOptions({ lastPriceAnimation: LastPriceAnimationMode.Disabled });
+      } catch {
+        /* series/chart already torn down */
+      }
+
+      // Detach primitives using effect closure `series` — refs may already be stale in Strict Mode.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const primitives = (series as any).attachedPrimitives?.() ?? [];
+        for (const p of primitives) {
+          try {
+            series.detachPrimitive(p);
+          } catch {
+            /* ignore */
           }
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
+
       seriesRef.current = null;
       chartRef.current = null;
-      chart.remove();
+
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        delete (window as any)[debugKey];
+      } catch {
+        /* ignore */
+      }
+
+      /**
+       * `chart.remove()` disposes fancy-canvas immediately; LW may still have a queued paint for the
+       * same frame. Defer remove by two rAF ticks so pending `_internal_paint` runs first, avoiding
+       * "Error: Object is disposed" from TimeAxisWidget.
+       */
+      const chartToRemove = chart;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          try {
+            chartToRemove.remove();
+          } catch {
+            /* already removed / race */
+          }
+        });
+      });
     };
   }, [
     containerRef,

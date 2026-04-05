@@ -182,11 +182,15 @@ export function OpponentMirrorChart({
 
     redrawOpponentOverlay();
 
-    const tsUnsub = chart.timeScale().subscribeVisibleLogicalRangeChange(redrawOpponentOverlay);
-    const chUnsub = chart.subscribeCrosshairMove(redrawOpponentOverlay);
+    chart.timeScale().subscribeVisibleLogicalRangeChange(redrawOpponentOverlay);
+    chart.subscribeCrosshairMove(redrawOpponentOverlay);
     return () => {
-      tsUnsub();
-      chUnsub();
+      try {
+        chart.timeScale().unsubscribeVisibleLogicalRangeChange(redrawOpponentOverlay);
+        chart.unsubscribeCrosshairMove(redrawOpponentOverlay);
+      } catch {
+        /* chart may be destroyed before cleanup (Strict Mode / error boundary) */
+      }
     };
   }, [chartRef, opponentDrawing, redrawOpponentOverlay]);
 
