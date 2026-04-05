@@ -678,6 +678,21 @@ export function TradingChart({
         drawingUndoStackRef.current = [];
         drawingRedoStackRef.current = [];
         removeNonBrushLineTools(lineToolsRef.current);
+        // Reassert viewport: line-tools removal triggers async chart
+        // rescale that can corrupt the visible range / price axis.
+        const _chart = chartRef.current;
+        const _series = seriesRef.current;
+        const _game = fixedLogicalRangeRef.current;
+        const _price = fixedPriceRangeRef.current;
+        if (_chart && _series && _game) {
+          applyLockedViewport(_chart, _series, _game, _price);
+          reassertViewportAfterLineToolsPlugin(
+            _chart,
+            _series,
+            _game,
+            _price,
+          );
+        }
         queueMicrotask(() => schedulePersistGameDrawingsRef.current?.());
       }
       if (!brushPanViewportAppliedRef.current && anchor != null) {
