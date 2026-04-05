@@ -1,20 +1,23 @@
 import { useRef, useCallback, Suspense, useMemo } from 'react';
-import { Canvas, useFrame, useLoader, type ThreeEvent } from '@react-three/fiber';
+import { Canvas, useFrame, type ThreeEvent } from '@react-three/fiber';
+import { useGLTF } from '@react-three/drei';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
+import blazeModel from '../assets/models/485a60ad-e9f0-41d9-8e59-12179641035a.glb?url';
+import frostModel from '../assets/models/d901d517-90bc-4c1c-b21b-7c26b9d1eb38.glb?url';
+import emberModel from '../assets/models/d91560e9-946c-4dfc-8a61-f11913466ad9.glb?url';
 
 const MODEL_PATHS: Record<string, string> = {
-  shiba: '/models/shiba.glb',
-  husky: '/models/husky.glb',
-  fox: '/models/fox.glb',
+  blaze: blazeModel,
+  frost: frostModel,
+  ember: emberModel,
 };
 
 function useClonedModel(avatarId: string) {
-  const path = MODEL_PATHS[avatarId] ?? MODEL_PATHS.shiba;
-  const gltf = useLoader(GLTFLoader, path);
-  return useMemo(() => cloneSkeleton(gltf.scene), [gltf.scene]);
+  const path = MODEL_PATHS[avatarId] ?? MODEL_PATHS.blaze;
+  const { scene } = useGLTF(path);
+  return useMemo(() => cloneSkeleton(scene), [scene]);
 }
 
 /* ── Static thumbnail — faces camera, no interaction ── */
@@ -144,7 +147,7 @@ export function AvatarCubePreview({ avatarId }: { avatarId: string }) {
           animate={{ x: 0, y: 0, opacity: 1 }}
           exit={{ x: '-100%', y: '100%', opacity: 0 }}
           transition={{ type: 'spring', stiffness: 100, damping: 16, mass: 0.9 }}
-          className="w-full h-full cursor-grab active:cursor-grabbing absolute inset-0"
+          className="w-full h-full cursor-grab active:cursor-grabbing absolute inset-0 pointer-events-auto"
         >
           <Canvas camera={{ position: [-0.15, 0.55, 2.4], fov: 35 }}>
             <ambientLight intensity={1.2} />

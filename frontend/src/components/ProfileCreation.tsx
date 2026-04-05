@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import { AvatarCubeThumb, AvatarCubePreview } from './AvatarCube';
 
 const AVATARS = [
-  { id: 'shiba', label: 'Shiba' },
-  { id: 'husky', label: 'Husky' },
-  { id: 'fox', label: 'Fox' },
+  { id: 'blaze', label: 'Blaze' },
+  { id: 'frost', label: 'Frost' },
+  { id: 'ember', label: 'Ember' },
 ];
 
 export interface ProfileCreationProps {
@@ -39,13 +39,13 @@ export const ProfileCreation: React.FC<ProfileCreationProps> = ({ onProfileSaved
       </div>
 
       {/* Selected cube — fixed bottom-left, responsive size */}
-      <div className="fixed z-[40]" style={{ bottom: '2vmin', left: '1vmin', width: 'clamp(220px, 65vmin, 560px)', height: 'clamp(220px, 65vmin, 560px)' }}>
+      <div className="fixed z-[40] pointer-events-none" style={{ bottom: '2vmin', left: '1vmin', width: 'clamp(160px, 40vw, 560px)', height: 'clamp(160px, 40vw, 560px)' }}>
         <AvatarCubePreview avatarId={selectedAvatar.id} />
       </div>
 
       {/* Main layout — centered form */}
       <div className="flex-1 flex items-center justify-center px-10">
-        <div className="flex flex-col items-center w-full max-w-[440px]">
+        <div className="flex flex-col items-center w-full" style={{ maxWidth: 'clamp(300px, 35vw, 440px)' }}>
           <div className="w-full mb-6">
             <h2 className="text-lg font-bold text-foreground mb-3">Choose a nickname</h2>
             <input
@@ -71,7 +71,7 @@ export const ProfileCreation: React.FC<ProfileCreationProps> = ({ onProfileSaved
                       : 'border-border text-muted-foreground hover:border-muted-foreground'
                   }`}
                 >
-                  <div className="w-full h-[80px]">
+                  <div className="w-full" style={{ height: 'clamp(56px, 6vw, 80px)' }}>
                     <AvatarCubeThumb avatarId={avatar.id} />
                   </div>
                   <span className="text-sm mt-1">{avatar.label}</span>
@@ -83,7 +83,8 @@ export const ProfileCreation: React.FC<ProfileCreationProps> = ({ onProfileSaved
           <button
             onClick={handleSave}
             disabled={!nickname.trim() || isSaving}
-            className="mt-2 w-full h-[54px] rounded-full bg-accent text-accent-foreground text-base font-bold cursor-pointer flex items-center justify-center transition-all duration-150 hover:bg-accent/90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+            className="mt-2 w-full rounded-full bg-accent text-accent-foreground text-base font-bold cursor-pointer flex items-center justify-center transition-all duration-150 hover:bg-accent/90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ height: 'clamp(44px, 4.5vw, 54px)' }}
           >
             {isSaving ? 'Saving...' : 'Save Profile'}
           </button>
