@@ -1,3 +1,5 @@
 {
-  "schedule": "*/30 * * * * *"
+  "schedule": "*/30 * * * * *",
+  "backendUrl": "https://staging-api.cryptopredict.app",
+  "creScoringSecret": ""
 }
