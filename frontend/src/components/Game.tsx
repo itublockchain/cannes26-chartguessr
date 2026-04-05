@@ -208,12 +208,7 @@ export const Game: React.FC<GameProps> = ({ profile }) => {
     <>
       <div className="absolute inset-0 flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-11 py-8 shrink-0">
-          <img
-            src="/cryptopredict-logo.svg"
-            alt="CryptoPredict"
-            className="h-[22px] w-auto max-w-[min(72vw,480px)] object-contain object-left select-none"
-          />
+        <div className="flex items-center justify-end px-11 py-8 shrink-0">
           <div className="flex items-center gap-2.5">
             {/* Debug cycle button to switch states */}
             <button

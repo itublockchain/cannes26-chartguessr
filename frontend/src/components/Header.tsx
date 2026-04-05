@@ -62,10 +62,11 @@ export const Header: React.FC = () => {
 
   return (
     <header className="flex items-center justify-between px-8 py-4 shrink-0 border-b border-border bg-card/60 backdrop-blur-sm">
-      {/* Left: Brand */}
-      <img src="/cryptopredict-logo.svg" alt="CryptoPredict" className="h-6 w-auto max-w-[240px] object-contain object-left select-none" />
-
-      {/* Right: Balance + Address + Logout */}
+      <img
+        src="/game-logo.svg"
+        alt="Game"
+        className="h-6 w-auto max-w-[240px] object-contain object-left select-none"
+      />
       <div className="flex items-center gap-3">
         {/* USDC Balance */}
         <div className="flex items-center gap-2 bg-muted/60 rounded-full px-4 py-2">
