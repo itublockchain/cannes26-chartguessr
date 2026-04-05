@@ -4,9 +4,9 @@ import type { ResolvedTradingChartGameConfig } from "../types";
 import { layoutGamePhaseOverlays } from "../utils/layoutGamePhaseOverlays";
 
 /**
- * Second pane: phase lines / tinted regions aligned with the chart time scale.
+ * Keeps opponent mirror phase lines / tinted regions aligned with the chart time scale.
  */
-export function useSecondPaneChartOverlays(
+export function useMirrorChartOverlays(
   chartRef: RefObject<IChartApi | null>,
   chartAreaRef: RefObject<HTMLDivElement | null>,
   lineT0Ref: RefObject<HTMLDivElement | null>,

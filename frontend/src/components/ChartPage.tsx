@@ -1,17 +1,17 @@
 import { useCallback, useState } from 'react'
 import {
-  SecondPaneChart,
+  OpponentMirrorChart,
   TradingChart,
-  type GameRoundWindow,
+  type MirrorGameWindow,
 } from './TradingChart'
 
 const WS_URL = import.meta.env.VITE_WS_URL ?? 'ws://localhost:4000'
 
 export function ChartPage() {
   const [gameRoundWindow, setGameRoundWindow] =
-    useState<GameRoundWindow | null>(null)
+    useState<MirrorGameWindow | null>(null)
 
-  const onGameRoundWindowKnown = useCallback((w: GameRoundWindow) => {
+  const onGameRoundWindowKnown = useCallback((w: MirrorGameWindow) => {
     setGameRoundWindow(w)
   }, [])
 
@@ -20,7 +20,7 @@ export function ChartPage() {
       wsUrl={WS_URL}
       onGameRoundWindowKnown={onGameRoundWindowKnown}
       resultSidePane={
-        <SecondPaneChart wsUrl={WS_URL} gameWindow={gameRoundWindow} />
+        <OpponentMirrorChart wsUrl={WS_URL} gameWindow={gameRoundWindow} />
       }
       onDrawingComplete={(points) => {
         console.log('[Drawing]', points)

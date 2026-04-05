@@ -16,6 +16,7 @@ import {
   type ReactElement,
 } from "react";
 import type {
+  DrawingCapabilityState,
   DrawingPoint,
   DrawingToolbarState,
   TradingChartProps,
@@ -24,6 +25,9 @@ import { resolveGameConfig } from "./types";
 import { useChartSetup } from "./hooks/useChartSetup";
 import {
   useLineTools,
+  type AddToolOptions,
+  freezeAllBrushStrokes,
+  removeCreatingLineTools,
   removeNonBrushLineTools,
 } from "./hooks/useLineTools";
 import {
@@ -36,24 +40,24 @@ import {
   visibleLogicalForChartAfterTool,
 } from "./hooks/useWebSocket";
 import { useGameLogic } from "./hooks/useGameLogic";
-import type { ChartDualSync } from "./hooks/useSecondPaneChartWebSocket";
-import type { SecondPaneChartProps } from "./SecondPaneChart";
+import type { ChartDualSync } from "./hooks/useMirrorWebSocket";
+import type { OpponentMirrorChartProps } from "./OpponentMirrorChart";
 import { applyDrawingConstraints } from "./utils/constraints";
+import { redrawDevDrawingPointsCanvas } from "./utils/devDrawingPointsCanvas";
 import { buildPaneDualSync } from "./utils/buildPaneDualSync";
-import {
-  applyChartTimeScaleStyle,
-  applyDualPaneChartChrome,
-} from "./utils/chartTimeScale";
 import { cn } from "./utils/cn";
-import { PEN_CURSOR } from "./chartConstants";
+import { PEN_CURSOR, type GamePhase } from "./chartConstants";
 import { TradingChartToolbar } from "./TradingChartToolbar";
 import { useTradingChartKeyboard } from "./hooks/useTradingChartKeyboard";
 import { useTradingChartChartShellLayout } from "./hooks/useTradingChartChartShellLayout";
-import { useDevOverlay } from "./hooks/useDevOverlay";
-import { useDrawingPersistence } from "./hooks/useDrawingPersistence";
-import { useDrawingHistory } from "./hooks/useDrawingHistory";
-import { useGamePhase } from "./hooks/useGamePhase";
-import { useToolSelection } from "./hooks/useToolSelection";
+import {
+  brushSegmentsFromLineToolsExport,
+  clearGameDrawingPersistence,
+  GAME_DRAWING_STORAGE_VERSION,
+  readGameDrawingPersistence,
+  writeGameDrawingPersistence,
+} from "./utils/gameDrawingPersistence";
+import { ensureFreehandPaneViewsClamped } from "./utils/freehandPaneViewClamp";
 import styles from "./TradingChart.module.css";
 
 export function TradingChart({
@@ -75,61 +79,97 @@ export function TradingChart({
   const gameConfigRef = useRef(gameConfig);
   gameConfigRef.current = gameConfig;
 
-  // ── DOM refs ─────────────────────────────────────────────────────────────
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
-  const chartShellRef = useRef<HTMLDivElement | null>(null);
   const lineT0Ref = useRef<HTMLDivElement | null>(null);
   const lineObsEndRef = useRef<HTMLDivElement | null>(null);
   const lineTahminEndRef = useRef<HTMLDivElement | null>(null);
   const lineRoundEndRef = useRef<HTMLDivElement | null>(null);
   const gameBgAreaRef = useRef<HTMLDivElement | null>(null);
   const gameTahminBgAreaRef = useRef<HTMLDivElement | null>(null);
+  const activeToolRef = useRef<string | null>(null);
+  const isLockedRef = useRef(false);
+  const brushAllowedRef = useRef(false);
+  /** Oyun penceresi veya line-tools henüz yokken seçilen araç; hazır olunca bir kez addTool ile uygulanır */
+  const pendingToolRef = useRef<string | null>(null);
+  const roundAnchorLogicalRef = useRef<number | null>(null);
+  /** Faz 3+: yalnız fırça bandı + sağ boşluk görünümü uygulandı mı (yeniden boyutta sağ pad güncellenir) */
+  const brushPanViewportAppliedRef = useRef(false);
+  /** 60 mumluk fırça alanı başladı (tahmin bitti): fırça dışı çizimler bir kez silindi mi */
+  const nonBrushToolsClearedAtBrushZoneStartRef = useRef(false);
+  const viewportAnimationActiveRef = useRef(false);
+  const brushViewportAnimRafRef = useRef<number | null>(null);
+  const fixedLogicalRangeRef = useRef<{ from: number; to: number } | null>(
+    null,
+  );
+  const fixedPriceRangeRef = useRef<{ from: number; to: number } | null>(null);
 
-  // ── Dual-pane ─────────────────────────────────────────────────────────────
   const hasResultSidePane = resultSidePane != null;
   const hasResultSidePaneRef = useRef(hasResultSidePane);
   hasResultSidePaneRef.current = hasResultSidePane;
 
-  // ── Shared mutable state ──────────────────────────────────────────────────
+  const [activeTool, setActiveTool] = useState<string | null>(null);
   const [isLocked, setIsLocked] = useState(false);
-  const isLockedRef = useRef(false);
+  const [gamePhase, setGamePhase] = useState<GamePhase>(1);
+  const gamePhaseRef = useRef<GamePhase>(gamePhase);
+  gamePhaseRef.current = gamePhase;
+  /** Çizim yeteneği snapshot’ı (debug) */
+  const [drawingCapability, setDrawingCapability] =
+    useState<DrawingCapabilityState | null>(null);
+  const lastDrawingCapabilityJsonRef = useRef<string>("");
+  const [drawingToolbar, setDrawingToolbar] = useState<DrawingToolbarState>({
+    activeDrawingToolKey: null,
+    isEngaged: false,
+  });
+  /** Tur boyunca her tamamlanan fırça segmenti; oyun bitince tek seferlik log için */
+  const drawingSegmentsRef = useRef<DrawingPoint[][]>([]);
+  /** Debug overlay (Shift+B): son tamamlanan fırça stroke’u / noktalar */
+  const devBrushPointsRef = useRef<DrawingPoint[]>([]);
+  /** Shift+B — chart “debug mode”: fırça faz kilidi yok + sarı nokta overlay */
+  const [chartDebugMode, setChartDebugMode] = useState(false);
+  const chartDebugModeRef = useRef(false);
+  const chartShellRef = useRef<HTMLDivElement | null>(null);
+  const drawingDebugCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const redrawDevDrawingOverlayRef = useRef<() => void>(() => {});
+  const schedulePersistGameDrawingsRef = useRef<(() => void) | null>(null);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const restoredGameStartRef = useRef<number | null>(null);
+  /** Tamamlanan çizimler — Ctrl/Cmd+Z ile sondan geri alma (line-tools id sırası) */
+  const drawingUndoStackRef = useRef<{ id: string; toolType: string }[]>([]);
+  /** Geri alınan çizimler — Ctrl/Cmd+Shift+Z ile tekrar (exportLineTools tek öğe JSON) */
+  const drawingRedoStackRef = useRef<string[]>([]);
+
   useEffect(() => {
     isLockedRef.current = isLocked;
   }, [isLocked]);
 
-  const [chartDebugMode, setChartDebugMode] = useState(false);
-  const chartDebugModeRef = useRef(false);
-
   const effectiveCoin = coinProp ?? "BTC";
 
-  // Viewport locks (shared across many hooks)
-  const fixedLogicalRangeRef = useRef<{ from: number; to: number } | null>(null);
-  const fixedPriceRangeRef = useRef<{ from: number; to: number } | null>(null);
-  const roundAnchorLogicalRef = useRef<number | null>(null);
-
-  // Drawing state shared across hooks
-  const drawingSegmentsRef = useRef<DrawingPoint[][]>([]);
-  const devBrushPointsRef = useRef<DrawingPoint[]>([]);
-  const drawingUndoStackRef = useRef<{ id: string; toolType: string }[]>([]);
-  const drawingRedoStackRef = useRef<string[]>([]);
-
-  // Animation refs
-  const viewportAnimationActiveRef = useRef(false);
-  const brushViewportAnimRafRef = useRef<number | null>(null);
-  const brushPanViewportAppliedRef = useRef(false);
-  const nonBrushToolsClearedAtBrushZoneStartRef = useRef(false);
-
-  // Lifecycle refs
+  /** Çizim sırasında canlı fiyat bandı takibi durur; bitince flushLivePriceRangeRef ile devam eder. */
   const pauseLivePriceRangeRef = useRef(false);
   const flushLivePriceRangeRef = useRef<(() => void) | null>(null);
-  const lineToolsBeforeChartRemoveRef = useRef<(() => void) | null>(null);
 
-  // ── Chart setup ───────────────────────────────────────────────────────────
-  const { chartRef, seriesRef } = useChartSetup(chartContainerRef, undefined, {
-    beforeChartRemoveRef: lineToolsBeforeChartRemoveRef,
-  });
+  const { chartRef, seriesRef } = useChartSetup(chartContainerRef);
 
-  // ── Game logic ────────────────────────────────────────────────────────────
+  const redrawDevDrawingOverlay = useCallback(() => {
+    const chart = chartRef.current;
+    const series = seriesRef.current;
+    const shell = chartShellRef.current;
+    const canvas = drawingDebugCanvasRef.current;
+    if (!chart || !series || !shell || !canvas) return;
+    redrawDevDrawingPointsCanvas(
+      chart as IChartApiBase<UTCTimestamp>,
+      series as ISeriesApi<SeriesType, UTCTimestamp>,
+      shell,
+      canvas,
+      devBrushPointsRef.current,
+      chartDebugModeRef.current,
+    );
+  }, [chartRef, seriesRef]);
+
+  useEffect(() => {
+    redrawDevDrawingOverlayRef.current = redrawDevDrawingOverlay;
+  }, [redrawDevDrawingOverlay]);
+
   const {
     gameStartTimeRef,
     gameStartPriceRef,
@@ -147,36 +187,28 @@ export function TradingChart({
     onGameStateChange,
   });
 
-  // ── Simple capability logger (no state, no re-renders) ───────────────────
-  const emitDrawingCapability = useCallback(
-    (reason: string, options?: { forceLog?: boolean }) => {
-      if (options?.forceLog) {
-        console.log("[DrawingCapability]", reason);
+  const updateActiveTool = useCallback((toolKey: string | null) => {
+    activeToolRef.current = toolKey;
+    setActiveTool(toolKey);
+  }, []);
+
+  const handleDrawingComplete = useCallback(
+    (points: DrawingPoint[]) => {
+      if (points.length > 0) {
+        drawingSegmentsRef.current.push(points);
+        devBrushPointsRef.current = points.slice();
       }
+      onDrawingComplete?.(points);
+      requestAnimationFrame(() => redrawDevDrawingOverlayRef.current());
     },
-    [],
+    [onDrawingComplete],
   );
 
-  // Shared persist trigger — must exist before useLineTools so it can wire into it
-  const schedulePersistGameDrawingsRef = useRef<(() => void) | null>(null);
-
-  // ── Dev overlay ───────────────────────────────────────────────────────────
-  const { drawingDebugCanvasRef, redrawDevDrawingOverlay, redrawDevDrawingOverlayRef } =
-    useDevOverlay({
-      chartRef: chartRef as React.RefObject<IChartApiBase<UTCTimestamp> | null>,
-      seriesRef: seriesRef as React.RefObject<ISeriesApi<SeriesType, UTCTimestamp> | null>,
-      chartShellRef,
-      devBrushPointsRef,
-      chartDebugModeRef,
-    });
-
-  // ── Stroke-finished bridge (useLineTools ↔ useToolSelection) ─────────────
-  // Created before useLineTools so it can be captured by onToolFinished.
-  const strokeContinuationForwardRef = useRef<
-    ((toolInfo: { toolType?: string; id?: string }) => void) | null
+  /** Brush / Trend / Yatay çizim bitince yeniden arm — ref ile güncel addTool */
+  const onStrokeFinishedContinuationRef = useRef<
+    ((toolInfo: { toolType?: string }) => void) | null
   >(null);
 
-  // ── Line tools ────────────────────────────────────────────────────────────
   const {
     lineToolsRef,
     initLineTools,
@@ -190,40 +222,174 @@ export function TradingChart({
     seriesRef,
     fixedLogicalRangeRef,
     fixedPriceRangeRef,
-    onDrawingComplete: (points) => {
-      if (points.length > 0) {
-        drawingSegmentsRef.current.push(points);
-        devBrushPointsRef.current = points.slice();
-      }
-      onDrawingComplete?.(points);
-      requestAnimationFrame(() => redrawDevDrawingOverlayRef.current());
-    },
-    onToolFinished: (info) => strokeContinuationForwardRef.current?.(info),
+    onDrawingComplete: handleDrawingComplete,
+    onToolFinished: (info) => onStrokeFinishedContinuationRef.current?.(info),
     schedulePersistGameDrawingsRef,
     pauseLivePriceRangeRef,
     flushLivePriceRangeRef,
   });
-  lineToolsBeforeChartRemoveRef.current = cleanup;
 
-  // ── Drawing persistence ───────────────────────────────────────────────────
-  const { restoreGameDrawingsFromStorageRef } =
-    useDrawingPersistence({
-      lineToolsRef,
-      chartRef,
-      seriesRef,
-      gameStartTimeRef,
-      fixedLogicalRangeRef,
-      fixedPriceRangeRef,
-      effectiveCoin,
-      drawingSegmentsRef,
-      devBrushPointsRef,
-      redrawDevDrawingOverlayRef,
-      drawingUndoStackRef,
-      drawingRedoStackRef,
-      schedulePersistGameDrawingsRef,
-    });
+  const flushPersistGameDrawingState = useCallback(() => {
+    const lt = lineToolsRef.current;
+    const t0 = gameStartTimeRef.current;
+    if (!lt || t0 == null || typeof lt.exportLineTools !== "function") return;
+    try {
+      const lineToolsJson = lt.exportLineTools();
+      writeGameDrawingPersistence(effectiveCoin, {
+        v: GAME_DRAWING_STORAGE_VERSION,
+        gameStartTime: t0,
+        lineToolsJson,
+      });
+    } catch {
+      /* ignore */
+    }
+  }, [effectiveCoin]);
 
-  // ── Viewport correction after line-tools mutations ────────────────────────
+  const schedulePersistGameDrawingState = useCallback(() => {
+    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = setTimeout(() => {
+      persistTimerRef.current = null;
+      flushPersistGameDrawingState();
+    }, 120);
+  }, [flushPersistGameDrawingState]);
+
+  useEffect(() => {
+    schedulePersistGameDrawingsRef.current = schedulePersistGameDrawingState;
+    return () => {
+      if (persistTimerRef.current) {
+        clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = null;
+      }
+    };
+  }, [schedulePersistGameDrawingState]);
+
+  const restoreGameDrawingsFromStorage = useCallback(() => {
+    const lt = lineToolsRef.current;
+    const chart = chartRef.current;
+    const series = seriesRef.current;
+    const t0 = gameStartTimeRef.current;
+    const logical = fixedLogicalRangeRef.current;
+    const price = fixedPriceRangeRef.current;
+    if (!lt || !chart || !series || t0 == null) return;
+    if (restoredGameStartRef.current === t0) return;
+
+    const saved = readGameDrawingPersistence(effectiveCoin);
+    if (!saved) {
+      drawingUndoStackRef.current = [];
+      drawingRedoStackRef.current = [];
+      restoredGameStartRef.current = t0;
+      return;
+    }
+    if (saved.gameStartTime !== t0) {
+      clearGameDrawingPersistence(effectiveCoin);
+      drawingUndoStackRef.current = [];
+      drawingRedoStackRef.current = [];
+      restoredGameStartRef.current = t0;
+      return;
+    }
+
+    drawingUndoStackRef.current = [];
+    drawingRedoStackRef.current = [];
+    lt.removeAllLineTools();
+    const ok = lt.importLineTools(saved.lineToolsJson);
+    if (!ok) {
+      restoredGameStartRef.current = t0;
+      return;
+    }
+    ensureFreehandPaneViewsClamped(lt);
+    freezeAllBrushStrokes(lt);
+    drawingSegmentsRef.current = brushSegmentsFromLineToolsExport(
+      saved.lineToolsJson,
+    );
+    const segs = drawingSegmentsRef.current;
+    if (segs.length > 0) {
+      devBrushPointsRef.current = segs[segs.length - 1]!.slice();
+    } else {
+      devBrushPointsRef.current = [];
+    }
+    if (logical) {
+      applyLockedViewport(chart, series, logical, price);
+      scheduleReassertLockedViewport(chart, series, logical, price);
+    }
+    restoredGameStartRef.current = t0;
+    requestAnimationFrame(() => redrawDevDrawingOverlayRef.current());
+  }, [effectiveCoin]);
+
+  const restoreGameDrawingsFromStorageRef = useRef(
+    restoreGameDrawingsFromStorage,
+  );
+  restoreGameDrawingsFromStorageRef.current = restoreGameDrawingsFromStorage;
+
+  useEffect(() => {
+    restoredGameStartRef.current = null;
+    drawingUndoStackRef.current = [];
+    drawingRedoStackRef.current = [];
+  }, [effectiveCoin]);
+
+  const removeSelectedAndPersist = useCallback(() => {
+    drawingRedoStackRef.current = [];
+    removeSelected();
+    queueMicrotask(() => schedulePersistGameDrawingsRef.current?.());
+  }, [removeSelected]);
+
+  const addToolWithDevClear = useCallback(
+    (toolKey: string, opts?: AddToolOptions) => {
+      if (chartDebugModeRef.current && toolKey === "Brush") {
+        devBrushPointsRef.current = [];
+        requestAnimationFrame(() => redrawDevDrawingOverlayRef.current());
+      }
+      addTool(toolKey, opts);
+    },
+    [addTool],
+  );
+
+  /** Stroke sonrası yeniden arm: `addToolWithDevClear` kullanma — o ref’i sıfırlar; debug noktaları silinir. */
+  const addToolRef = useRef(addTool);
+  addToolRef.current = addTool;
+
+  const emitDrawingCapability = useCallback(
+    (reason: string, options?: { forceLog?: boolean }) => {
+      const locked = isLockedRef.current;
+      const phase = gamePhaseRef.current;
+      const hasChart = chartRef.current != null;
+      const hasSeries = seriesRef.current != null;
+      const hasLineToolsPlugin = lineToolsRef.current != null;
+      const hasGameLogicalRange = fixedLogicalRangeRef.current != null;
+      const chartReady =
+        hasChart && hasSeries && hasLineToolsPlugin && hasGameLogicalRange;
+      const debugOn = chartDebugModeRef.current;
+      const brushAllowed = !locked && (debugOn || phase === 2);
+      const act = activeToolRef.current;
+      const pend = pendingToolRef.current;
+      const s: DrawingCapabilityState = {
+        isLocked: locked,
+        gamePhase: phase,
+        activeTool: act,
+        pendingTool: pend,
+        chartDebugMode: debugOn,
+        hasChart,
+        hasSeries,
+        hasLineToolsPlugin,
+        hasGameLogicalRange,
+        chartReadyForLineTools: chartReady,
+        brushAllowed,
+        canDrawTrendOrHorizontal: !locked && chartReady,
+        canDrawBrush:
+          brushAllowed && chartReady && (act === "Brush" || pend === "Brush"),
+      };
+      const json = JSON.stringify(s);
+      const force = options?.forceLog === true;
+      if (!force && json === lastDrawingCapabilityJsonRef.current) {
+        return;
+      }
+      lastDrawingCapabilityJsonRef.current = json;
+      setDrawingCapability(s);
+      console.log("[DrawingCapability]", reason, s);
+    },
+    [],
+  );
+
+  /** Line-tools remove/import → `chart.applyOptions({})` viewport kayar; addTool/restore ile aynı kilidi yeniden uygula. */
   const reassertViewportAfterLineToolsMutation = useCallback(() => {
     const chart = chartRef.current;
     const series = seriesRef.current;
@@ -236,72 +402,153 @@ export function TradingChart({
     reassertViewportAfterLineToolsPlugin(chart, series, logical, price);
   }, [chartRef, seriesRef]);
 
-  // ── Drawing history (undo/redo) ───────────────────────────────────────────
-  const { undoLastDrawing, redoLastDrawing, removeSelectedAndPersist } =
-    useDrawingHistory({
-      lineToolsRef,
-      isLockedRef,
-      drawingUndoStackRef,
-      drawingRedoStackRef,
-      drawingSegmentsRef,
-      devBrushPointsRef,
-      redrawDevDrawingOverlayRef,
-      schedulePersistGameDrawingsRef,
-      reassertViewportAfterLineToolsMutation,
-      emitDrawingCapability,
-      removeSelected,
+  const undoLastDrawing = useCallback(() => {
+    if (isLockedRef.current) return;
+    const lt = lineToolsRef.current;
+    if (!lt?.removeLineToolsById) return;
+
+    const stack = drawingUndoStackRef.current;
+    if (stack.length > 0) {
+      const { id, toolType } = stack.pop()!;
+      if (typeof lt.exportLineTools === "function") {
+        try {
+          const exported = lt.exportLineTools() as string;
+          const arr = JSON.parse(exported) as { id?: string }[];
+          if (Array.isArray(arr)) {
+            const entry = arr.find((t) => t && t.id === id);
+            if (entry) {
+              drawingRedoStackRef.current.push(JSON.stringify([entry]));
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      try {
+        lt.removeLineToolsById([id]);
+      } catch {
+        /* ignore */
+      }
+      reassertViewportAfterLineToolsMutation();
+      if (toolType === "Brush" && drawingSegmentsRef.current.length > 0) {
+        drawingSegmentsRef.current.pop();
+      }
+      if (toolType === "Brush") {
+        const segsAfterUndo = drawingSegmentsRef.current;
+        devBrushPointsRef.current =
+          segsAfterUndo.length > 0
+            ? segsAfterUndo[segsAfterUndo.length - 1]!.slice()
+            : [];
+      }
+      requestAnimationFrame(() => redrawDevDrawingOverlayRef.current());
+      queueMicrotask(() => schedulePersistGameDrawingsRef.current?.());
+      emitDrawingCapability("undo-last-drawing", { forceLog: true });
+      return;
+    }
+
+    const cancelled = removeCreatingLineTools(lt);
+    if (cancelled > 0) {
+      reassertViewportAfterLineToolsMutation();
+      queueMicrotask(() => schedulePersistGameDrawingsRef.current?.());
+      emitDrawingCapability("undo-in-progress-drawing", { forceLog: true });
+    }
+  }, [emitDrawingCapability, reassertViewportAfterLineToolsMutation]);
+
+  const redoLastDrawing = useCallback(() => {
+    if (isLockedRef.current) return;
+    const lt = lineToolsRef.current;
+    if (!lt?.importLineTools) return;
+
+    const redoStack = drawingRedoStackRef.current;
+    if (redoStack.length === 0) return;
+
+    const json = redoStack[redoStack.length - 1]!;
+    let id: string | undefined;
+    let toolType: string | undefined;
+    try {
+      const parsed = JSON.parse(json) as { id?: string; toolType?: string }[];
+      if (!Array.isArray(parsed) || parsed.length === 0) return;
+      const entry = parsed[0]!;
+      id = entry.id;
+      toolType = entry.toolType;
+      const ok = lt.importLineTools(json);
+      if (!ok) return;
+      redoStack.pop();
+    } catch {
+      return;
+    }
+
+    if (typeof id === "string" && id.length > 0 && toolType) {
+      drawingUndoStackRef.current.push({ id, toolType });
+    }
+
+    if (toolType === "Brush") {
+      const segs = brushSegmentsFromLineToolsExport(json);
+      const stroke = segs[0];
+      if (stroke && stroke.length > 0) {
+        drawingSegmentsRef.current.push(stroke);
+      }
+    }
+
+    ensureFreehandPaneViewsClamped(lt);
+    freezeAllBrushStrokes(lt);
+    reassertViewportAfterLineToolsMutation();
+
+    if (toolType === "Brush") {
+      const segs = drawingSegmentsRef.current;
+      devBrushPointsRef.current =
+        segs.length > 0 ? segs[segs.length - 1]!.slice() : [];
+      requestAnimationFrame(() => redrawDevDrawingOverlayRef.current());
+    }
+
+    queueMicrotask(() => schedulePersistGameDrawingsRef.current?.());
+    emitDrawingCapability("redo-last-drawing", { forceLog: true });
+  }, [emitDrawingCapability, reassertViewportAfterLineToolsMutation]);
+
+  const penCursorActive = useMemo(() => {
+    const dc = drawingCapability;
+    if (!dc || dc.isLocked || !dc.chartReadyForLineTools || !dc.canDrawBrush) {
+      return false;
+    }
+    const act = dc.activeTool;
+    const pend = dc.pendingTool;
+    return act === "Brush" || pend === "Brush";
+  }, [drawingCapability]);
+
+  const tryApplyPendingTool = useCallback(() => {
+    const p = pendingToolRef.current;
+    if (!p || isLockedRef.current) return;
+    if (p === "Brush" && !brushAllowedRef.current) return;
+    if (!lineToolsRef.current || !fixedLogicalRangeRef.current) return;
+    pendingToolRef.current = null;
+    addToolWithDevClear(p, { replacePreviousOfSameKind: p === "Brush" });
+    requestAnimationFrame(() => {
+      chartContainerRef.current?.focus({ preventScroll: true });
     });
+    emitDrawingCapability(`tryApplyPendingTool:${p}`, { forceLog: true });
+  }, [addToolWithDevClear, emitDrawingCapability]);
 
-  // ── Game phase ────────────────────────────────────────────────────────────
-  const { gamePhase, syncPhaseAndMaybeAutoBrush } = useGamePhase({
-    gameStartTimeRef,
-    lastTimeRef,
-    gameObservationEndTimeRef,
-    gameTahminEndTimeRef,
-    isLockedRef,
-    chartContainerRef,
-    lineToolsRef,
-    emitDrawingCapability,
-  });
+  const tryApplyPendingToolRef = useRef(tryApplyPendingTool);
+  tryApplyPendingToolRef.current = tryApplyPendingTool;
 
-  // Derived — computed fresh every render, synced to ref for closures
-  const brushAllowed = !isLocked && (chartDebugMode || gamePhase === 2);
-  const brushAllowedRef = useRef(false);
+  const updateOverlays = useCallback(() => {
+    const container = chartContainerRef.current;
+    if (!container) return;
+    updateOverlayPositions(
+      lineT0Ref.current,
+      lineObsEndRef.current,
+      lineTahminEndRef.current,
+      lineRoundEndRef.current,
+      gameTahminBgAreaRef.current,
+      gameBgAreaRef.current,
+      container,
+    );
+  }, [updateOverlayPositions]);
+
   useEffect(() => {
-    brushAllowedRef.current = brushAllowed;
-  }, [brushAllowed]);
+    updateOverlays();
+  }, [isLocked, updateOverlays]);
 
-  // ── Tool selection ────────────────────────────────────────────────────────
-  const {
-    activeTool,
-    activeToolRef,
-    pendingToolRef,
-    updateActiveTool,
-    tryApplyPendingTool,
-    handleSelectTool,
-    addToolWithDevClear,
-    onStrokeFinishedContinuationRef,
-  } = useToolSelection({
-    lineToolsRef,
-    addTool,
-    deactivateDrawingMode,
-    isLockedRef,
-    brushAllowedRef,
-    fixedLogicalRangeRef,
-    chartContainerRef,
-    devBrushPointsRef,
-    chartDebugModeRef,
-    redrawDevDrawingOverlayRef,
-    drawingUndoStackRef,
-    drawingRedoStackRef,
-    emitDrawingCapability,
-  });
-
-  // Wire the stroke-finished bridge — ref assignment is safe during render
-  strokeContinuationForwardRef.current = (info) =>
-    onStrokeFinishedContinuationRef.current?.(info);
-
-  // ── Chart + line-tools ready ──────────────────────────────────────────────
   useEffect(() => {
     if (!chartRef.current || !seriesRef.current) return;
 
@@ -320,73 +567,92 @@ export function TradingChart({
 
     queueMicrotask(() => {
       restoreGameDrawingsFromStorageRef.current();
-      tryApplyPendingTool();
-      console.log("[DrawingCapability] chart-line-tools-ready");
+      tryApplyPendingToolRef.current();
+      emitDrawingCapability("chart-line-tools-ready", { forceLog: true });
     });
 
     return () => {
+      cleanup();
+      restoredGameStartRef.current = null;
       drawingUndoStackRef.current = [];
       drawingRedoStackRef.current = [];
     };
-  }, [chartRef.current, seriesRef.current]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [chartRef.current, seriesRef.current, emitDrawingCapability]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Chart debug mode toggle ───────────────────────────────────────────────
   useEffect(() => {
     chartDebugModeRef.current = chartDebugMode;
-    console.log("[DrawingCapability] chart-debug-mode", chartDebugMode);
-    requestAnimationFrame(() => redrawDevDrawingOverlay());
-  }, [chartDebugMode, redrawDevDrawingOverlay]);
+    emitDrawingCapability("chart-debug-mode", { forceLog: true });
+    requestAnimationFrame(() => redrawDevDrawingOverlayRef.current());
+  }, [chartDebugMode, emitDrawingCapability]);
 
-  // ── Brush mode guard: disable brush tool when phase closes ───────────────
-  useEffect(() => {
-    if (activeTool !== "Brush") return;
-    if (brushAllowed) return;
-    pendingToolRef.current = null;
-    updateActiveTool(null);
-    deactivateDrawingMode();
-    console.log("[DrawingCapability] condition:brush-phase-closed-tool");
-  }, [activeTool, brushAllowed, updateActiveTool, deactivateDrawingMode, pendingToolRef]);
-
-  // ── Drawing toolbar state (synced from activeTool) ────────────────────────
-  const [drawingToolbar, setDrawingToolbar] = useState<DrawingToolbarState>({
-    activeDrawingToolKey: null,
-    isEngaged: false,
+  useTradingChartChartShellLayout({
+    chartRef,
+    seriesRef,
+    chartContainerRef,
+    chartShellRef,
+    isLocked,
+    hasResultSidePane,
+    updateOverlays,
+    redrawDevDrawingOverlay,
+    fixedLogicalRangeRef,
+    fixedPriceRangeRef,
+    roundAnchorLogicalRef,
+    gameConfigRef,
+    isLockedRef,
+    hasResultSidePaneRef,
+    brushPanViewportAppliedRef,
+    viewportAnimationActiveRef,
+    brushViewportAnimRafRef,
   });
-  useEffect(() => {
-    const next: DrawingToolbarState = {
-      activeDrawingToolKey: activeTool,
-      isEngaged: activeTool !== null,
-    };
-    setDrawingToolbar(next);
-    onDrawingToolbarChange?.(next);
-  }, [activeTool, onDrawingToolbarChange]);
-
-  // ── Overlay positioning ───────────────────────────────────────────────────
-  const updateOverlays = useCallback(() => {
-    const container = chartContainerRef.current;
-    if (!container) return;
-    updateOverlayPositions(
-      lineT0Ref.current,
-      lineObsEndRef.current,
-      lineTahminEndRef.current,
-      lineRoundEndRef.current,
-      gameTahminBgAreaRef.current,
-      gameBgAreaRef.current,
-      container,
-    );
-  }, [updateOverlayPositions]);
-
-  const updateOverlaysRef = useRef(updateOverlays);
-  updateOverlaysRef.current = updateOverlays;
 
   useEffect(() => {
-    updateOverlays();
-  }, [isLocked, updateOverlays]);
+    const ser = seriesRef.current;
+    if (!ser) return;
+    if (isLocked && hasResultSidePane) {
+      ser.applyOptions({ lastValueVisible: false });
+    } else {
+      ser.applyOptions({ lastValueVisible: true });
+    }
+  }, [isLocked, hasResultSidePane, seriesRef.current]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Per-tick orchestration ────────────────────────────────────────────────
+  const syncPhaseAndMaybeAutoBrush = useCallback(() => {
+    const t0 = gameStartTimeRef.current;
+    const lt = lastTimeRef.current;
+    const obsEnd = gameObservationEndTimeRef.current;
+    const tahEnd = gameTahminEndTimeRef.current;
+    if (t0 === null || lt === null || obsEnd === null || tahEnd === null)
+      return;
+
+    const phase: GamePhase = lt < obsEnd ? 1 : lt < tahEnd ? 2 : 3;
+
+    setGamePhase((prev) => {
+      if (prev === 1 && phase === 2 && !isLockedRef.current) {
+        queueMicrotask(() => {
+          if (!isLockedRef.current && lineToolsRef.current) {
+            addToolWithDevClear("Brush");
+            updateActiveTool("Brush");
+            requestAnimationFrame(() => {
+              chartContainerRef.current?.focus({ preventScroll: true });
+            });
+            emitDrawingCapability("auto-brush-phase-2", { forceLog: true });
+          }
+        });
+      }
+      return phase;
+    });
+  }, [
+    addToolWithDevClear,
+    updateActiveTool,
+    lineToolsRef,
+    gameStartTimeRef,
+    lastTimeRef,
+    gameObservationEndTimeRef,
+    gameTahminEndTimeRef,
+    emitDrawingCapability,
+  ]);
+
   const performAfterTick = useCallback(() => {
-    // Inject tool actions to break circular dep between useGamePhase ↔ useToolSelection
-    syncPhaseAndMaybeAutoBrush({ addToolWithDevClear, updateActiveTool });
+    syncPhaseAndMaybeAutoBrush();
 
     const lt = lastTimeRef.current;
     const te = gameTahminEndTimeRef.current;
@@ -432,28 +698,31 @@ export function TradingChart({
       lockAllTools();
       if (activeToolRef.current) updateActiveTool(null);
       deactivateDrawingMode();
-      console.log("[DrawingCapability] game-locked");
+      emitDrawingCapability("game-locked", { forceLog: true });
     }
     updateOverlays();
     tryApplyPendingTool();
     if (chartDebugModeRef.current) {
       requestAnimationFrame(() => redrawDevDrawingOverlayRef.current());
     }
+    emitDrawingCapability("afterTick");
   }, [
     syncPhaseAndMaybeAutoBrush,
-    addToolWithDevClear,
-    updateActiveTool,
     checkLockCondition,
     lockAllTools,
+    updateActiveTool,
     updateOverlays,
     tryApplyPendingTool,
+    emitDrawingCapability,
     deactivateDrawingMode,
   ]);
 
   const performAfterTickRef = useRef(performAfterTick);
   performAfterTickRef.current = performAfterTick;
+  const updateOverlaysRef = useRef(updateOverlays);
+  updateOverlaysRef.current = updateOverlays;
 
-  // ── Locked viewport — snap to brush zone on lock ──────────────────────────
+  /** Kilit + ikiye bölünmüş layout: sol panelde yalnızca fırça bandı (ör. 60 mum) */
   useEffect(() => {
     if (!isLocked) return;
     let cancelled = false;
@@ -486,7 +755,6 @@ export function TradingChart({
     };
   }, [isLocked]);
 
-  // ── WebSocket callbacks ───────────────────────────────────────────────────
   const onWsSnapshotLoaded = useCallback(() => {
     queueMicrotask(() => {
       restoreGameDrawingsFromStorageRef.current();
@@ -505,15 +773,6 @@ export function TradingChart({
     },
     [onGameRoundWindowKnown],
   );
-
-  // ── Dual-pane price range sync ────────────────────────────────────────────
-  const [mainPriceRangeVersion, setMainPriceRangeVersion] = useState(0);
-  const livePriceRangeNotifyRef = useRef<(() => void) | null>(null);
-  livePriceRangeNotifyRef.current = () => {
-    if (isLockedRef.current && hasResultSidePaneRef.current) {
-      setMainPriceRangeVersion((n) => n + 1);
-    }
-  };
 
   useWebSocket({
     wsUrl,
@@ -536,87 +795,160 @@ export function TradingChart({
     flushLivePriceRangeRef,
     viewportAnimationActiveRef,
     onGameRoundWindowKnown: onRoundWindowFromWs,
-    livePriceRangeNotifyRef,
   });
 
-  // ── Dual-pane sync ────────────────────────────────────────────────────────
-  const computePaneDualSync = useCallback((): ChartDualSync | null => {
-    if (!isLocked || !hasResultSidePane) return null;
-    const anchor = roundAnchorLogicalRef.current;
-    const chart = chartRef.current;
-    const base = buildPaneDualSync(
-      chart ?? undefined,
-      anchor,
-      fixedPriceRangeRef.current,
-    );
-    if (!base || anchor == null) return null;
-    const lockedLogical = fixedLogicalRangeRef.current;
-    const liveVis = chart?.timeScale().getVisibleLogicalRange() ?? null;
-    const fallback = brushZoneOnlyLogicalRange(anchor, gameConfig);
-    const visible = lockedLogical ?? liveVis ?? fallback;
-    return {
-      ...base,
-      visibleLogical: { from: visible.from, to: visible.to },
-    };
-  }, [isLocked, hasResultSidePane, gameConfig]);
+  const brushAllowed = !isLocked && (chartDebugMode || gamePhase === 2);
 
   useEffect(() => {
-    const chart = chartRef.current;
-    const ser = seriesRef.current;
-    if (!chart || !ser) return;
-    const dualPane = isLocked && hasResultSidePane;
-    const paneDualSyncLocal = computePaneDualSync();
+    brushAllowedRef.current = brushAllowed;
+  }, [brushAllowed]);
 
-    if (dualPane) {
-      chart.applyOptions({ rightPriceScale: { visible: false } });
-      ser.applyOptions({ lastValueVisible: false });
-      if (paneDualSyncLocal) {
-        applyDualPaneChartChrome(chart, paneDualSyncLocal);
-      }
-    } else {
-      chart.applyOptions({ rightPriceScale: { visible: true } });
-      ser.applyOptions({ lastValueVisible: true });
-      applyChartTimeScaleStyle(chart, "full");
-    }
-
-    const logical = fixedLogicalRangeRef.current;
-    const price = fixedPriceRangeRef.current;
-    if (!logical || !price) return;
-
-    queueMicrotask(() => {
-      requestAnimationFrame(() => {
-        const c = chartRef.current;
-        const s = seriesRef.current;
-        if (c && s) {
-          applyLockedViewport(c, s, logical, price);
-          scheduleReassertLockedViewport(c, s, logical, price);
-        }
-      });
-    });
-  }, [isLocked, hasResultSidePane, computePaneDualSync, mainPriceRangeVersion]);
-
-  // ── Shell layout hook ─────────────────────────────────────────────────────
-  useTradingChartChartShellLayout({
-    chartRef,
-    seriesRef,
-    chartContainerRef,
-    chartShellRef,
+  useEffect(() => {
+    emitDrawingCapability("react-state");
+  }, [
+    activeTool,
+    gamePhase,
     isLocked,
-    hasResultSidePane,
-    updateOverlays,
-    redrawDevDrawingOverlay,
-    fixedLogicalRangeRef,
-    fixedPriceRangeRef,
-    roundAnchorLogicalRef,
-    gameConfigRef,
-    isLockedRef,
-    hasResultSidePaneRef,
-    brushPanViewportAppliedRef,
-    viewportAnimationActiveRef,
-    brushViewportAnimRafRef,
-  });
+    brushAllowed,
+    chartDebugMode,
+    emitDrawingCapability,
+  ]);
 
-  // ── Keyboard shortcuts ────────────────────────────────────────────────────
+  useEffect(() => {
+    const next: DrawingToolbarState = {
+      activeDrawingToolKey: activeTool,
+      isEngaged: activeTool !== null,
+    };
+    setDrawingToolbar(next);
+    onDrawingToolbarChange?.(next);
+  }, [activeTool, onDrawingToolbarChange]);
+
+  /** Fırça artık izinli değilse (faz değişimi) araç modunu kapat */
+  useEffect(() => {
+    if (activeTool !== "Brush") return;
+    if (brushAllowed) return;
+    pendingToolRef.current = null;
+    updateActiveTool(null);
+    deactivateDrawingMode();
+    emitDrawingCapability("condition:brush-phase-closed-tool", {
+      forceLog: true,
+    });
+  }, [
+    activeTool,
+    brushAllowed,
+    updateActiveTool,
+    deactivateDrawingMode,
+    emitDrawingCapability,
+  ]);
+
+  useEffect(() => {
+    const g = globalThis as unknown as {
+      __tradingChartDrawingCapability?: DrawingCapabilityState | null;
+      __tradingChartDrawingToolbar?: DrawingToolbarState;
+    };
+    if (!chartDebugMode) {
+      delete g.__tradingChartDrawingCapability;
+      delete g.__tradingChartDrawingToolbar;
+      return;
+    }
+    g.__tradingChartDrawingCapability = drawingCapability;
+    g.__tradingChartDrawingToolbar = drawingToolbar;
+  }, [chartDebugMode, drawingCapability, drawingToolbar]);
+
+  onStrokeFinishedContinuationRef.current = (toolInfo: {
+    toolType?: string;
+    id?: string;
+  }) => {
+    const type = toolInfo?.toolType;
+    if (
+      type !== "Brush" &&
+      type !== "TrendLine" &&
+      type !== "Ray" &&
+      type !== "HorizontalLine" &&
+      type !== "FibRetracement"
+    ) {
+      return;
+    }
+    const finishedId = toolInfo?.id;
+    if (
+      typeof finishedId === "string" &&
+      finishedId.length > 0 &&
+      !isLockedRef.current
+    ) {
+      drawingRedoStackRef.current = [];
+      drawingUndoStackRef.current.push({ id: finishedId, toolType: type });
+    }
+    if (isLockedRef.current) return;
+    if (type === "Brush" && !brushAllowedRef.current) return;
+    queueMicrotask(() => {
+      if (isLockedRef.current) return;
+      if (type === "Brush" && !brushAllowedRef.current) return;
+      addToolRef.current(type, { replacePreviousOfSameKind: false });
+      requestAnimationFrame(() => {
+        chartContainerRef.current?.focus({ preventScroll: true });
+      });
+      emitDrawingCapability(`stroke-continued:${type}`, { forceLog: true });
+    });
+  };
+
+  const handleSelectTool = useCallback(
+    (toolKey: string) => {
+      if (isLocked) {
+        emitDrawingCapability("handleSelectTool:blocked-locked", {
+          forceLog: true,
+        });
+        return;
+      }
+
+      if (activeTool === toolKey) {
+        pendingToolRef.current = null;
+        updateActiveTool(null);
+        deactivateDrawingMode();
+        emitDrawingCapability(`handleSelectTool:toggle-off:${toolKey}`, {
+          forceLog: true,
+        });
+        return;
+      }
+
+      if (toolKey === "Brush" && !brushAllowed) {
+        emitDrawingCapability("handleSelectTool:blocked-brush-phase", {
+          forceLog: true,
+        });
+        return;
+      }
+
+      updateActiveTool(toolKey);
+      if (!lineToolsRef.current || !fixedLogicalRangeRef.current) {
+        pendingToolRef.current = toolKey;
+        queueMicrotask(() => {
+          tryApplyPendingToolRef.current();
+        });
+        emitDrawingCapability("handleSelectTool:pending-until-chart", {
+          forceLog: true,
+        });
+        return;
+      }
+      pendingToolRef.current = null;
+      addToolWithDevClear(toolKey, {
+        replacePreviousOfSameKind:
+          toolKey === "Brush" || toolKey === "FibRetracement",
+      });
+      requestAnimationFrame(() => {
+        chartContainerRef.current?.focus({ preventScroll: true });
+      });
+      emitDrawingCapability(`handleSelectTool:${toolKey}`, { forceLog: true });
+    },
+    [
+      isLocked,
+      activeTool,
+      addToolWithDevClear,
+      updateActiveTool,
+      brushAllowed,
+      emitDrawingCapability,
+      deactivateDrawingMode,
+    ],
+  );
+
   useTradingChartKeyboard({
     isLocked,
     setChartDebugMode,
@@ -626,39 +958,31 @@ export function TradingChart({
     removeSelectedAndPersist,
   });
 
-  // ── Delete selected ───────────────────────────────────────────────────────
   const handleDeleteSelected = useCallback(() => {
     if (isLocked) return;
     pendingToolRef.current = null;
     removeSelectedAndPersist();
     updateActiveTool(null);
     deactivateDrawingMode();
-    console.log("[DrawingCapability] deleteSelected");
+    emitDrawingCapability("deleteSelected", { forceLog: true });
   }, [
     isLocked,
     removeSelectedAndPersist,
     updateActiveTool,
     deactivateDrawingMode,
-    pendingToolRef,
+    emitDrawingCapability,
   ]);
 
-  // ── globalThis debug (only when debug mode on) ────────────────────────────
-  useEffect(() => {
-    const g = globalThis as Record<string, unknown>;
-    if (!chartDebugMode) {
-      delete g.__tradingChartDrawingToolbar;
-      return;
-    }
-    g.__tradingChartDrawingToolbar = drawingToolbar;
-  }, [chartDebugMode, drawingToolbar]);
+  /** Kilit anında bile ilk karede — snapshot race olmadan rakibe iletilir */
+  const paneDualSync: ChartDualSync | null =
+    isLocked && hasResultSidePane
+      ? buildPaneDualSync(
+          chartRef.current ?? undefined,
+          roundAnchorLogicalRef.current,
+          fixedPriceRangeRef.current,
+        )
+      : null;
 
-  // ── Pen cursor ────────────────────────────────────────────────────────────
-  const penCursorActive =
-    !isLocked && brushAllowed && activeTool === "Brush";
-
-  const paneDualSync: ChartDualSync | null = computePaneDualSync();
-
-  // ── JSX ───────────────────────────────────────────────────────────────────
   return (
     <div className={cn(styles.wrapper, className)}>
       <TradingChartToolbar
@@ -670,12 +994,7 @@ export function TradingChart({
       />
 
       <div className={styles.mainColumn}>
-        <div
-          className={cn(
-            styles.chartWorkspace,
-            isLocked && hasResultSidePane && styles.chartWorkspaceDual,
-          )}
-        >
+        <div className={styles.chartWorkspace}>
           <div
             className={cn(
               styles.chartLeftPane,
@@ -738,17 +1057,14 @@ export function TradingChart({
               <div className={styles.chartWorkspaceDivider} aria-hidden />
               <div
                 className={styles.chartRightPlaceholder}
-                aria-label={resultSidePane ? "Second chart column" : undefined}
+                aria-label={resultSidePane ? "Rakip grafiği" : undefined}
               >
                 {isValidElement(resultSidePane)
                   ? cloneElement(
-                      resultSidePane as ReactElement<SecondPaneChartProps>,
+                      resultSidePane as ReactElement<OpponentMirrorChartProps>,
                       {
                         dualSync: paneDualSync,
                         mainChartPriceRangeRef: fixedPriceRangeRef,
-                        mainChartLogicalRangeRef: fixedLogicalRangeRef,
-                        mainPriceRangeVersion,
-                        mainChartRef: chartRef,
                       },
                     )
                   : (resultSidePane ?? null)}

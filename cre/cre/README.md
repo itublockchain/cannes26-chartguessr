@@ -1,27 +1,62 @@
-# Hello World (TypeScript)
+# CryptoPredict CRE Workflow (TypeScript)
 
-This template provides a blank TypeScript workflow example. It aims to give a starting point for writing a workflow from scratch and to get started with local simulation.
+A TypeScript Chainlink CRE workflow for autonomous match settlement in the prediction game.
 
-Steps to run the example
+## Features
 
-## 1. Update .env file
+- **On-Chain Settlement**: Autonomous match resolution via Chainlink DON consensus
+- **Price Feed Integration**: BTC/USD prices from Chainlink Data Streams
 
-You need to add a private key to env file. This is specifically required if you want to simulate chain writes. For that to work the key should be valid and funded.
-If your workflow does not do any chain write then you can just put any dummy key as a private key. e.g.
-```
-CRE_ETH_PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001
-```
+## Installation
 
-## 2. Install dependencies
 ```bash
 bun install
 ```
 
-## 3. Simulate the workflow
-Run the command from <b>project root directory</b>
+## Usage
+
+### Running Simulation
 
 ```bash
-cre workflow simulate <path-to-workflow> --target=staging-settings
+export CRE_ETH_PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001
+
+cre workflow simulate cre/cre --target=staging-settings
 ```
 
-It is recommended to look into other existing examples to see how to write a workflow. You can generate them by running the `cre init` command.
+## Current Status
+
+**Template only.** Settlement currently runs as a backend fallback (operator settles). This workflow replaces that when deployed to Chainlink DON.
+
+| Mode | How It Works |
+|------|-------------|
+| Backend Fallback (current) | Operator detects `MatchLocked`, waits 60s, calls `settleMatch` |
+| CRE Workflow (target) | DON detects `MatchLocked`, fetches prices, settles via consensus |
+
+## Target Workflow
+
+| Step | Action |
+|------|--------|
+| 1 | Trigger on `MatchLocked` contract event (EVM Log Trigger) |
+| 2 | Wait 60 seconds for drawing phase |
+| 3 | Fetch BTC/USD prices from Chainlink Data Streams |
+| 4 | Call backend `/cre/score` to calculate winner |
+| 5 | Submit `settleMatch(matchId, winner, startPrice, endPrice)` on-chain |
+
+## CRE Configuration
+
+Enable CRE on the escrow contract:
+
+```bash
+cast send $ESCROW_ADDRESS "setCREForwarder(address)" $CRE_FORWARDER_ADDRESS \
+  --rpc-url https://rpc.testnet.arc.network \
+  --private-key $OWNER_PRIVATE_KEY
+```
+
+Once set, only the CRE forwarder can call `settleMatch`.
+
+## Development
+
+```bash
+# Type checking
+bun run typecheck
+```

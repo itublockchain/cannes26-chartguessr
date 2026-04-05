@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from "react";
+import { useEffect, useRef } from "react";
 import type {
   ISeriesApi,
   IChartApi,
@@ -9,22 +9,21 @@ import type {
 } from "lightweight-charts";
 import type { Candle1s, ResolvedTradingChartGameConfig } from "../types";
 import { toLW, fillCandleGaps, candlesToLine } from "../utils/candles";
+import { SeriesAnimator } from "../utils/seriesAnimator";
 import { applyDualPaneChartChrome } from "../utils/chartTimeScale";
 import {
   applyLockedViewport,
-  applyVisiblePriceRangeFromSeriesOrChart,
   brushZoneOnlyLogicalRange,
   refreshLockedPriceRangeFromLiveSeries,
   scheduleReassertLockedViewport,
 } from "./useWebSocket";
 
-/** Tur [T0, roundEnd] unix saniye — ikinci panel grafiği aynı pencereyi kullanır. */
-export interface GameRoundWindow {
+export interface MirrorGameWindow {
   startTime: number;
   endTime: number;
 }
 
-/** Dual column: lock-step with main chart (logical anchor, price band, optional bar spacing). */
+/** Ana oyun grafiği kilitlenince sağ panel ile birebir hizalama. */
 export interface ChartDualSync {
   anchorLogical: number;
   priceRange: { from: number; to: number };
@@ -32,38 +31,14 @@ export interface ChartDualSync {
   barSpacing?: number;
 }
 
-function normalizedLogicalRange(
-  r: { from: number; to: number } | null | undefined,
-): { from: number; to: number } | null {
-  if (r == null) return null;
-  if (!Number.isFinite(r.from) || !Number.isFinite(r.to)) return null;
-  if (r.to - r.from <= 1e-9) return null;
-  return { from: r.from, to: r.to };
-}
-
-/**
- * Sol panel `fixedLogicalRangeRef` ile kilitler; sağda `getVisibleLogicalRange()` öncelikli olunca
- * LWC’nin iç yuvarlaması yüzünden birkaç ondalık fark oluşup çizgi kayıyordu.
- * Sıra: paylaşılan ana ref → props’taki visibleLogical → canlı okuma → fırça bandı.
- */
-function resolveSecondPaneVisibleLogical(
-  mainLogicalRef: React.MutableRefObject<{
-    from: number;
-    to: number;
-  } | null> | null | undefined,
-  mainChart: IChartApi | null | undefined,
+function logicalRangeForDual(
   dual: ChartDualSync,
   gameConfig: ResolvedTradingChartGameConfig,
 ): { from: number; to: number } {
-  const fromShared = normalizedLogicalRange(mainLogicalRef?.current ?? null);
-  if (fromShared) return fromShared;
-  const fromDual = normalizedLogicalRange(dual.visibleLogical ?? null);
-  if (fromDual) return fromDual;
-  const live = normalizedLogicalRange(
-    mainChart?.timeScale().getVisibleLogicalRange() ?? null,
+  return (
+    dual.visibleLogical ??
+    brushZoneOnlyLogicalRange(dual.anchorLogical, gameConfig)
   );
-  if (live) return live;
-  return brushZoneOnlyLogicalRange(dual.anchorLogical, gameConfig);
 }
 
 interface Params {
@@ -72,23 +47,15 @@ interface Params {
   chartRef: React.RefObject<IChartApi | null>;
   seriesRef: React.RefObject<ISeriesApi<"Area"> | null>;
   gameConfig: ResolvedTradingChartGameConfig;
-  /** Same round [T0, end] as main chart; without it snapshot may mis-anchor T0. */
-  gameWindow?: GameRoundWindow | null;
+  /** Ana `TradingChart` ile aynı tur [T0, tur sonu]; yoksa snapshot “son mum = T0” hatası oluşur. */
+  gameWindow?: MirrorGameWindow | null;
   dualSyncRef?: React.MutableRefObject<ChartDualSync | null>;
   dualSync?: ChartDualSync | null;
   /**
-   * Main chart `fixedPriceRangeRef` (read-only in dual column); Y-range matches left pane.
+   * Ana grafik `fixedPriceRangeRef` — çift panelde salt okunur; sağdaki seri min/max’i
+   * yerine her karede sol ile aynı görünür fiyat bandını kullanır (piksel dikey hiza).
    */
   mainChartPriceRangeRef?: React.MutableRefObject<{
-    from: number;
-    to: number;
-  } | null> | null;
-  /** Incremented when main live price band updates; reapplies Y from main ref in dual column. */
-  mainPriceRangeVersion?: number;
-  /** Kilit + çift sütun: sol grafiğin gerçek görünür mantıksal aralığı (props dualSync React yenilemeden güncellenmez). */
-  mainChartRef?: RefObject<IChartApi | null> | null;
-  /** Ana `fixedLogicalRangeRef` — sağ panel zaman eksenini piksel hizasında sol ile aynı tutar */
-  mainChartLogicalRangeRef?: React.MutableRefObject<{
     from: number;
     to: number;
   } | null> | null;
@@ -157,7 +124,6 @@ function computePaddedPriceRange(
 }
 
 function lockPriceScaleFromSnapshot(
-  chart: IChartApi,
   series: ISeriesApi<"Area">,
   candles: { high: number; low: number }[],
   fixedPriceRangeRef: React.MutableRefObject<{
@@ -180,7 +146,13 @@ function lockPriceScaleFromSnapshot(
     maxP = Math.max(maxP, c.high);
   }
   const range = computePaddedPriceRange(minP, maxP, gameConfig);
-  applyVisiblePriceRangeFromSeriesOrChart(chart, series, range);
+  try {
+    const ps = series.priceScale();
+    ps.setAutoScale(false);
+    ps.setVisibleRange(range);
+  } catch {
+    /* series detached */
+  }
   fixedPriceRangeRef.current = range;
 }
 
@@ -219,7 +191,6 @@ function scheduleStabilizeVisibleRange(
 }
 
 function applySyncedPriceRange(
-  chart: IChartApi,
   series: ISeriesApi<"Area">,
   dual: ChartDualSync,
   fixedPriceRangeRef: React.MutableRefObject<{
@@ -232,28 +203,16 @@ function applySyncedPriceRange(
     to: dual.priceRange.to,
   };
   fixedPriceRangeRef.current = range;
-  applyVisiblePriceRangeFromSeriesOrChart(chart, series, range);
-}
-
-function normalizedPriceBand(
-  r: { from: number; to: number } | null | undefined,
-): { from: number; to: number } | null {
-  if (r == null) return null;
-  if (
-    !Number.isFinite(r.from) ||
-    !Number.isFinite(r.to) ||
-    r.to === r.from
-  ) {
-    return null;
+  try {
+    const ps = series.priceScale();
+    ps.setAutoScale(false);
+    ps.setVisibleRange(range);
+  } catch {
+    /* series detached */
   }
-  return r;
 }
 
-/**
- * Çift sütun: Y her zaman sol ile aynı olmalı — yerel snapshot bandına (`lockPriceScaleFromSnapshot`)
- * düşmek iki grafiği kayırır; önce paylaşılan ref, sonra `dual.priceRange`, en son (yalnız tek panel) yerel.
- */
-function resolveSecondPaneViewportPrice(
+function resolveMirrorViewportPrice(
   mainChartPriceRangeRef: React.MutableRefObject<{
     from: number;
     to: number;
@@ -262,23 +221,23 @@ function resolveSecondPaneViewportPrice(
     from: number;
     to: number;
   } | null>,
-  dualFallback: ChartDualSync | null,
-  forDualColumnSync: boolean,
 ): { from: number; to: number } | null {
-  const fromMain = normalizedPriceBand(mainChartPriceRangeRef?.current ?? null);
-  if (fromMain) return fromMain;
-  const fromDual = normalizedPriceBand(dualFallback?.priceRange ?? null);
-  if (fromDual) return fromDual;
-  if (!forDualColumnSync) {
-    return normalizedPriceBand(localPriceRangeRef.current);
+  const fromMain = mainChartPriceRangeRef?.current;
+  if (
+    fromMain != null &&
+    Number.isFinite(fromMain.from) &&
+    Number.isFinite(fromMain.to) &&
+    fromMain.to !== fromMain.from
+  ) {
+    return fromMain;
   }
-  return null;
+  return localPriceRangeRef.current;
 }
 
 /**
- * Second panel: same WS protocol as main; dual-column sync when locked.
+ * Sonuç paneli: ana oyun grafiğiyle aynı WS protokolü; kilit fazında fırça bandı görünümü.
  */
-export function useSecondPaneChartWebSocket({
+export function useMirrorWebSocket({
   wsUrl,
   coin,
   chartRef,
@@ -288,9 +247,6 @@ export function useSecondPaneChartWebSocket({
   dualSyncRef,
   dualSync,
   mainChartPriceRangeRef,
-  mainPriceRangeVersion,
-  mainChartRef,
-  mainChartLogicalRangeRef,
 }: Params) {
   const lastTimeRef = useRef<number | null>(null);
   const gameStartTimeRef = useRef<number | null>(null);
@@ -302,7 +258,6 @@ export function useSecondPaneChartWebSocket({
   const fixedPriceRangeRef = useRef<{ from: number; to: number } | null>(null);
   const snapshotLoadedRef = useRef(false);
   const wsRef = useRef<WebSocket | null>(null);
-  const applyBrushViewportRef = useRef<(() => void) | null>(null);
 
   const getDual = (): ChartDualSync | null =>
     dualSyncRef?.current ?? dualSync ?? null;
@@ -317,29 +272,20 @@ export function useSecondPaneChartWebSocket({
 
     roundAnchorLogicalRef.current = dual.anchorLogical;
     if (!snapshotLoadedRef.current) {
-      const pm = resolveSecondPaneViewportPrice(
+      const pm = resolveMirrorViewportPrice(
         mainChartPriceRangeRef,
         fixedPriceRangeRef,
-        dual,
-        syncPriceFromMain,
       );
       if (!pm) {
-        applySyncedPriceRange(chart, series, dual, fixedPriceRangeRef);
+        applySyncedPriceRange(series, dual, fixedPriceRangeRef);
       }
     }
     applyDualPaneChartChrome(chart, dual);
-    const logical = resolveSecondPaneVisibleLogical(
-      mainChartLogicalRangeRef,
-      mainChartRef?.current ?? undefined,
-      dual,
-      gameConfig,
-    );
+    const logical = logicalRangeForDual(dual, gameConfig);
     fixedLogicalRangeRef.current = logical;
-    const price = resolveSecondPaneViewportPrice(
+    const price = resolveMirrorViewportPrice(
       mainChartPriceRangeRef,
       fixedPriceRangeRef,
-      dual,
-      syncPriceFromMain,
     );
     applyLockedViewport(chart, series, logical, price);
     scheduleReassertLockedViewport(chart, series, logical, price);
@@ -355,66 +301,11 @@ export function useSecondPaneChartWebSocket({
     dualSync?.visibleLogical?.from,
     dualSync?.visibleLogical?.to,
     dualSync?.barSpacing,
-    mainChartRef,
-    mainChartLogicalRangeRef,
-  ]);
-
-  /** Dual column: when main price band updates, re-lock Y from shared ref (separate WS ordering). */
-  useEffect(() => {
-    if (!syncPriceFromMain || mainChartPriceRangeRef == null) return;
-    if (mainPriceRangeVersion === undefined) return;
-    const chart = chartRef.current;
-    const series = seriesRef.current;
-    if (!chart || !series) return;
-
-    const dual = getDual();
-    if (dual) {
-      roundAnchorLogicalRef.current = dual.anchorLogical;
-      applyDualPaneChartChrome(chart, dual);
-    }
-    const anchor = roundAnchorLogicalRef.current;
-    if (anchor == null) return;
-
-    const logical =
-      dual != null
-        ? resolveSecondPaneVisibleLogical(
-            mainChartLogicalRangeRef,
-            mainChartRef?.current ?? undefined,
-            dual,
-            gameConfig,
-          )
-        : brushZoneOnlyLogicalRange(anchor, gameConfig);
-    fixedLogicalRangeRef.current = logical;
-    const price = resolveSecondPaneViewportPrice(
-      mainChartPriceRangeRef,
-      fixedPriceRangeRef,
-      dual,
-      syncPriceFromMain,
-    );
-    applyLockedViewport(chart, series, logical, price);
-    scheduleReassertLockedViewport(chart, series, logical, price);
-  }, [
-    mainPriceRangeVersion,
-    chartRef,
-    seriesRef,
-    gameConfig,
-    mainChartPriceRangeRef,
-    syncPriceFromMain,
-    dualSync?.anchorLogical,
-    dualSync?.priceRange.from,
-    dualSync?.priceRange.to,
-    dualSync?.visibleLogical?.from,
-    dualSync?.visibleLogical?.to,
-    dualSync?.barSpacing,
-    mainChartRef,
-    mainChartLogicalRangeRef,
   ]);
 
   useEffect(() => {
     if (!coin) return;
     if (!chartRef.current || !seriesRef.current) return;
-
-    seriesRef.current.setData([]);
 
     const ft0 = gameWindow?.startTime;
     const fEnd = gameWindow?.endTime;
@@ -449,6 +340,9 @@ export function useSecondPaneChartWebSocket({
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let pingTimer: ReturnType<typeof setInterval> | null = null;
 
+    /** Smooth price transition for mirror chart. */
+    const animator = new SeriesAnimator(series);
+
     const applyBrushViewport = () => {
       const c = chartRef.current;
       const s = seriesRef.current;
@@ -458,14 +352,12 @@ export function useSecondPaneChartWebSocket({
       if (dual) {
         roundAnchorLogicalRef.current = dual.anchorLogical;
         if (!snapshotLoadedRef.current) {
-          const pm = resolveSecondPaneViewportPrice(
+          const pm = resolveMirrorViewportPrice(
             mainChartPriceRangeRef,
             fixedPriceRangeRef,
-            dual,
-            syncPriceFromMain,
           );
           if (!pm) {
-            applySyncedPriceRange(c, s, dual, fixedPriceRangeRef);
+            applySyncedPriceRange(s, dual, fixedPriceRangeRef);
           }
         }
         applyDualPaneChartChrome(c, dual);
@@ -473,27 +365,17 @@ export function useSecondPaneChartWebSocket({
 
       const anchor = roundAnchorLogicalRef.current;
       if (anchor == null) return;
-      const logical =
-        dual != null
-          ? resolveSecondPaneVisibleLogical(
-              mainChartLogicalRangeRef,
-              mainChartRef?.current ?? undefined,
-              dual,
-              gameConfig,
-            )
-          : brushZoneOnlyLogicalRange(anchor, gameConfig);
+      const logical = dual
+        ? logicalRangeForDual(dual, gameConfig)
+        : brushZoneOnlyLogicalRange(anchor, gameConfig);
       fixedLogicalRangeRef.current = logical;
-      const price = resolveSecondPaneViewportPrice(
+      const price = resolveMirrorViewportPrice(
         mainChartPriceRangeRef,
         fixedPriceRangeRef,
-        dual,
-        syncPriceFromMain,
       );
       applyLockedViewport(c, s, logical, price);
       scheduleReassertLockedViewport(c, s, logical, price);
     };
-
-    applyBrushViewportRef.current = applyBrushViewport;
 
     function connectWs() {
       const socket = new WebSocket(wsUrl);
@@ -565,10 +447,12 @@ export function useSecondPaneChartWebSocket({
               : filled;
 
           series.setData(candlesToLine(dataForChart));
+          animator.reset();
           if (dataForChart.length > 0) {
-            lastClose = dataForChart[dataForChart.length - 1].close;
-            lastTimeRef.current = dataForChart[dataForChart.length - 1]
-              .time as number;
+            const lastCandle = dataForChart[dataForChart.length - 1];
+            lastClose = lastCandle.close;
+            lastTimeRef.current = lastCandle.time as number;
+            animator.snapTo(lastCandle.time as number, lastCandle.close);
           }
           const barCount = dataForChart.length;
           const t0 = gameStartTimeRef.current;
@@ -580,41 +464,16 @@ export function useSecondPaneChartWebSocket({
                 ? logicalIndexAtOrBeforeTime(dataForChart, t0)
                 : Math.max(0, barCount - 1);
           roundAnchorLogicalRef.current = anchor;
-          if (syncPriceFromMain) {
-            if (dualOnSnap) {
-              const pm = resolveSecondPaneViewportPrice(
-                mainChartPriceRangeRef,
-                fixedPriceRangeRef,
-                dualOnSnap,
-                true,
-              );
-              if (!pm) {
-                applySyncedPriceRange(
-                  chart,
-                  series,
-                  dualOnSnap,
-                  fixedPriceRangeRef,
-                );
-              }
-            }
-          } else if (dualOnSnap) {
-            const pm = resolveSecondPaneViewportPrice(
+          if (dualOnSnap) {
+            const pm = resolveMirrorViewportPrice(
               mainChartPriceRangeRef,
               fixedPriceRangeRef,
-              dualOnSnap,
-              false,
             );
             if (!pm) {
-              applySyncedPriceRange(
-                chart,
-                series,
-                dualOnSnap,
-                fixedPriceRangeRef,
-              );
+              applySyncedPriceRange(series, dualOnSnap, fixedPriceRangeRef);
             }
           } else {
             lockPriceScaleFromSnapshot(
-              chart,
               series,
               dataForChart,
               fixedPriceRangeRef,
@@ -624,11 +483,9 @@ export function useSecondPaneChartWebSocket({
           applyBrushViewport();
           const logical = fixedLogicalRangeRef.current;
           if (logical) {
-            const price = resolveSecondPaneViewportPrice(
+            const price = resolveMirrorViewportPrice(
               mainChartPriceRangeRef,
               fixedPriceRangeRef,
-              dualOnSnap,
-              syncPriceFromMain,
             );
             scheduleStabilizeVisibleRange(chart, series, logical, price);
           }
@@ -667,34 +524,23 @@ export function useSecondPaneChartWebSocket({
             for (let j = 1; j <= nMissing; j++) {
               const t = bridgeFrom + j;
               const alpha = j / (nMissing + 1);
-              series.update({
-                time: t as UTCTimestamp,
-                value: fromPrice + (data.open - fromPrice) * alpha,
-              });
+              animator.snapTo(t, fromPrice + (data.open - fromPrice) * alpha);
             }
           }
 
-          series.update({
-            time: targetTime as UTCTimestamp,
-            value: data.close,
-          });
+          animator.setTarget(targetTime, data.close);
           lastClose = data.close;
           lastLiveWickRef.current = { low: data.low, high: data.high };
           lastTimeRef.current = targetTime;
 
           if (snapshotLoadedRef.current) {
-            /* Dual column: Y band computed on main chart only; this pane uses mainChartPriceRangeRef. */
             if (!syncPriceFromMain) {
-              const cCur = chartRef.current;
-              if (cCur) {
-                refreshLockedPriceRangeFromLiveSeries(
-                  cCur,
-                  series,
-                  fixedPriceRangeRef,
-                  gameConfig,
-                  lastLiveWickRef.current,
-                );
-              }
+              refreshLockedPriceRangeFromLiveSeries(
+                series,
+                fixedPriceRangeRef,
+                gameConfig,
+                lastLiveWickRef.current,
+              );
             }
             applyBrushViewport();
           }
@@ -723,7 +569,7 @@ export function useSecondPaneChartWebSocket({
 
     return () => {
       cancelled = true;
-      applyBrushViewportRef.current = null;
+      animator.dispose();
       if (pingTimer) clearInterval(pingTimer);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (wsRef.current) wsRef.current.close();
@@ -738,25 +584,5 @@ export function useSecondPaneChartWebSocket({
     gameWindow?.endTime,
     mainChartPriceRangeRef,
     syncPriceFromMain,
-    mainChartRef,
-    mainChartLogicalRangeRef,
   ]);
-
-  /** Sol zaman ölçeği rAF ile güncellenince React render olmaz; sağ panel canlı logical ile eşitlenir (ws effect ref atar). */
-  useEffect(() => {
-    const main = mainChartRef?.current;
-    const dualNow = getDual();
-    if (!main || !dualNow) return;
-    const ts = main.timeScale();
-    const run = () => applyBrushViewportRef.current?.();
-    ts.subscribeVisibleLogicalRangeChange(run);
-    ts.subscribeVisibleTimeRangeChange(run);
-    ts.subscribeSizeChange(run);
-    queueMicrotask(run);
-    return () => {
-      ts.unsubscribeVisibleLogicalRangeChange(run);
-      ts.unsubscribeVisibleTimeRangeChange(run);
-      ts.unsubscribeSizeChange(run);
-    };
-  }, [mainChartRef, dualSync?.anchorLogical, chartRef, dualSync]);
 }

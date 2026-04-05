@@ -9,6 +9,7 @@ import type {
 } from "lightweight-charts";
 import type { Candle1s, ResolvedTradingChartGameConfig } from "../types";
 import { toLW, fillCandleGaps, candlesToLine } from "../utils/candles";
+import { SeriesAnimator } from "../utils/seriesAnimator";
 
 interface UseWebSocketParams {
   wsUrl: string;
@@ -40,56 +41,8 @@ interface UseWebSocketParams {
   flushLivePriceRangeRef: React.MutableRefObject<(() => void) | null>;
   /** Fırça görünümü animate edilirken zaman eksenini WS ile ezmeyi kes */
   viewportAnimationActiveRef: React.MutableRefObject<boolean>;
-  /** Once per round: real start/end unix (second-pane chart + parent state). */
+  /** Bir kez: gerçek tur başlangıcı ve bitişi (rakip/ayna grafik senkronu için). */
   onGameRoundWindowKnown?: (start: number, end: number) => void;
-  /**
-   * `fixedPriceRangeRef` canlı mumda güncellenince çağrılır (çift panel: sağ grafiği
-   * aynı ref ile aynı karede kilitlemek için). Ref her render güncellenir; effect deps’e girmez.
-   */
-  livePriceRangeNotifyRef?: React.MutableRefObject<(() => void) | null> | null;
-}
-
-/**
- * `series.priceScale()` bazen pane henüz yok / line-tools destroy / applyOptions yarışında patlar;
- * sağ eksen gizliyken `chart.priceScale("right")` ile dene.
- */
-export function applyVisiblePriceRangeFromSeriesOrChart(
-  chart: IChartApi,
-  series: ISeriesApi<"Area">,
-  range: { from: number; to: number },
-) {
-  try {
-    const ps = series.priceScale();
-    ps.setAutoScale(false);
-    ps.setVisibleRange(range);
-    return;
-  } catch {
-    /* series pane geçici olarak null */
-  }
-  try {
-    const ps = chart.priceScale("right");
-    ps.setAutoScale(false);
-    ps.setVisibleRange(range);
-  } catch {
-    /* noop */
-  }
-}
-
-function applyAutoScaleFalseSeriesOrChart(
-  chart: IChartApi,
-  series: ISeriesApi<"Area">,
-) {
-  try {
-    series.priceScale().setAutoScale(false);
-    return;
-  } catch {
-    /* */
-  }
-  try {
-    chart.priceScale("right").setAutoScale(false);
-  } catch {
-    /* noop */
-  }
 }
 
 /** Zaman + fiyat görünümünü tek seferde sabitler (mum güncellemesi sonrası kütüphane kaydırmasını geri alır). */
@@ -101,13 +54,13 @@ export function applyLockedViewport(
 ) {
   try {
     chart.timeScale().setVisibleLogicalRange(logical);
+    const ps = series.priceScale();
+    ps.setAutoScale(false);
+    if (price) {
+      ps.setVisibleRange(price);
+    }
   } catch {
-    return;
-  }
-  if (price) {
-    applyVisiblePriceRangeFromSeriesOrChart(chart, series, price);
-  } else {
-    applyAutoScaleFalseSeriesOrChart(chart, series);
+    /* series/chart already detached during teardown */
   }
 }
 
@@ -388,7 +341,6 @@ function computePaddedPriceRange(
 }
 
 function lockPriceScaleFromSnapshot(
-  chart: IChartApi,
   series: ISeriesApi<"Area">,
   candles: { high: number; low: number }[],
   fixedPriceRangeRef: React.MutableRefObject<{
@@ -411,7 +363,13 @@ function lockPriceScaleFromSnapshot(
     maxP = Math.max(maxP, c.high);
   }
   const range = computePaddedPriceRange(minP, maxP, gameConfig);
-  applyVisiblePriceRangeFromSeriesOrChart(chart, series, range);
+  try {
+    const ps = series.priceScale();
+    ps.setAutoScale(false);
+    ps.setVisibleRange(range);
+  } catch {
+    /* series detached */
+  }
   fixedPriceRangeRef.current = range;
 }
 
@@ -440,9 +398,8 @@ function getLastLineDatum(
  * Canlı mumlar: çizgi sadece kapanış; fitil (high/low) ekran dışına çıkmasın diye son OHLC ile genişletir.
  * Son N saniyelik pencereyi kullanır — fiyat uçunca ölçek otomatik uyum sağlar.
  */
-/** Same live price band as main chart; second pane skips local range when `dual.priceRange` is synced. */
+/** Ana grafik ile aynı canlı mum bandı; ayna chart snapshot sonrası dual.priceRange ile kilitlememek için. */
 export function refreshLockedPriceRangeFromLiveSeries(
-  chart: IChartApi,
   series: ISeriesApi<"Area">,
   fixedPriceRangeRef: React.MutableRefObject<{
     from: number;
@@ -473,7 +430,13 @@ export function refreshLockedPriceRangeFromLiveSeries(
   if (!Number.isFinite(minP) || !Number.isFinite(maxP)) return;
 
   const range = computePaddedPriceRange(minP, maxP, gameConfig);
-  applyVisiblePriceRangeFromSeriesOrChart(chart, series, range);
+  try {
+    const ps = series.priceScale();
+    ps.setAutoScale(false);
+    ps.setVisibleRange(range);
+  } catch {
+    /* series detached */
+  }
   fixedPriceRangeRef.current = range;
 }
 
@@ -574,14 +537,11 @@ export function useWebSocket({
   flushLivePriceRangeRef,
   viewportAnimationActiveRef,
   onGameRoundWindowKnown,
-  livePriceRangeNotifyRef,
 }: UseWebSocketParams) {
   const wsRef = useRef<WebSocket | null>(null);
   const snapshotLoadedRef = useRef(false);
   const onRoundWindowCbRef = useRef(onGameRoundWindowKnown);
-  onRoundWindowCbRef.current = onGameRoundWindowKnown;
-  const livePriceNotifyRef = useRef(livePriceRangeNotifyRef);
-  livePriceNotifyRef.current = livePriceRangeNotifyRef;
+  useEffect(() => { onRoundWindowCbRef.current = onGameRoundWindowKnown; }, [onGameRoundWindowKnown]);
 
   useEffect(() => {
     if (!coin) return;
@@ -593,21 +553,22 @@ export function useWebSocket({
       current: null,
     };
 
+    /** Smooth price transition between ticks (300ms easeOutCubic). */
+    const animator = new SeriesAnimator(series);
+
     /** Son kapanış; boş saniyelerde fiyatı open’a doğrusal köprüler. */
     let lastClose: number | null = null;
 
     const flushLivePriceRange = () => {
       const s = seriesRef.current;
       const c = chartRef.current;
-      if (!s || !c) return;
+      if (!s) return;
       refreshLockedPriceRangeFromLiveSeries(
-        c,
         s,
         fixedPriceRangeRef,
         gameConfig,
         lastLiveWickRef.current,
       );
-      livePriceNotifyRef.current?.current?.();
       const logicalLive = fixedLogicalRangeRef.current;
       if (c && logicalLive && !viewportAnimationActiveRef.current) {
         scheduleReassertLockedViewport(
@@ -696,10 +657,14 @@ export function useWebSocket({
               : filled;
 
           series.setData(candlesToLine(dataForChart));
+          animator.reset();
           if (dataForChart.length > 0) {
-            lastClose = dataForChart[dataForChart.length - 1].close;
-            lastTimeRef.current = dataForChart[dataForChart.length - 1]
-              .time as number;
+            const lastCandle = dataForChart[dataForChart.length - 1];
+            lastClose = lastCandle.close;
+            lastTimeRef.current = lastCandle.time as number;
+            // Seed the animator with the last snapshot value so the
+            // first live tick animates smoothly from here.
+            animator.snapTo(lastCandle.time as number, lastCandle.close);
           }
           const barCount = dataForChart.length;
           const t0 = gameStartTimeRef.current;
@@ -714,7 +679,6 @@ export function useWebSocket({
           };
           fixedLogicalRangeRef.current = range;
           lockPriceScaleFromSnapshot(
-            chart,
             series,
             dataForChart,
             fixedPriceRangeRef,
@@ -727,7 +691,6 @@ export function useWebSocket({
             range,
             fixedPriceRangeRef.current,
           );
-          livePriceNotifyRef.current?.current?.();
           snapshotLoadedRef.current = true;
           onSnapshotLoaded();
         }
@@ -770,46 +733,30 @@ export function useWebSocket({
             for (let j = 1; j <= nMissing; j++) {
               const t = bridgeFrom + j;
               const alpha = j / (nMissing + 1);
-              series.update({
-                time: t as UTCTimestamp,
-                value: fromPrice + (data.open - fromPrice) * alpha,
-              });
+              // Gap-fill points snap instantly (no easing) to avoid visual lag
+              animator.snapTo(t, fromPrice + (data.open - fromPrice) * alpha);
             }
           }
 
           /*
-           * LWC `update`: 2+ saniye atlama tek çağrıda bazen yeni bir “kol” gibi
-           * çiziliyor; üstte eksik saniyeleri doldurduk.
+           * Perpetual animation loop: update the target value.
+           * The always-running rAF loop will smoothly chase this via
+           * exponential smoothing (low-pass filtered, ~60 FPS).
            */
-          series.update({
-            time: targetTime as UTCTimestamp,
-            value: data.close,
-          });
+          animator.setTarget(targetTime, data.close);
           lastClose = data.close;
           lastLiveWickRef.current = { low: data.low, high: data.high };
           lastTimeRef.current = targetTime;
           onCandleTick();
 
           if (snapshotLoadedRef.current) {
-            const logicalLive = fixedLogicalRangeRef.current;
-            if (!pauseLivePriceRangeRef.current) {
-              refreshLockedPriceRangeFromLiveSeries(
-                chart,
-                series,
-                fixedPriceRangeRef,
-                gameConfig,
-                lastLiveWickRef.current,
-              );
-              livePriceNotifyRef.current?.current?.();
-            }
-            if (logicalLive && !viewportAnimationActiveRef.current) {
-              scheduleReassertLockedViewport(
-                chart,
-                series,
-                logicalLive,
-                fixedPriceRangeRef.current,
-              );
-            }
+            // NOTE: Price scale is locked from snapshot.
+            // Per-tick rescaling (refreshLockedPriceRangeFromLiveSeries)
+            // and viewport reassertion (scheduleReassertLockedViewport)
+            // are DISABLED here because they cause instant Y-axis jumps
+            // that override the smooth price animation.
+            // The price range is wide enough from snapshot to accommodate
+            // the small live tick movements within the game round.
           }
 
           if (!snapshotLoadedRef.current) {
@@ -862,6 +809,7 @@ export function useWebSocket({
 
     return () => {
       cancelled = true;
+      animator.dispose();
       flushLivePriceRangeRef.current = null;
       if (pingTimer) clearInterval(pingTimer);
       if (reconnectTimer) clearTimeout(reconnectTimer);

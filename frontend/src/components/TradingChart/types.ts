@@ -168,12 +168,12 @@ export interface TradingChartProps {
   onDrawingToolbarChange?: (state: DrawingToolbarState) => void;
   className?: string;
   /**
-   * When the round is locked, React node shown in the right half (e.g. second price chart).
-   * Only mounted while `isLocked`.
+   * Oyun kilitlendiğinde sağ yarım panelde gösterilir (ör. rakip özeti / ayna grafik).
+   * Yalnızca `isLocked` iken mount edilir.
    */
   resultSidePane?: ReactNode;
   /**
-   * Round time window resolved (T0 + end unix s). Passed to the second-pane chart for the same slice.
+   * İlk tur zaman penceresi netleşince (T0 + tur sonu unix sn). Sağ ayna grafik aynı aralığı kullanır.
    */
   onGameRoundWindowKnown?: (window: {
     startTime: number;

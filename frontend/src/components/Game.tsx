@@ -21,10 +21,10 @@ export const Game: React.FC<GameProps> = ({ profile }) => {
 
     if (transitioning) return;
 
-    setTransitioning(true);
-
     const el = contentRef.current;
     if (!el) return;
+
+    queueMicrotask(() => setTransitioning(true));
 
     gsap.to(el, {
       opacity: 0,
@@ -50,7 +50,7 @@ export const Game: React.FC<GameProps> = ({ profile }) => {
         );
       },
     });
-  }, [gameState]);
+  }, [gameState, displayState, transitioning]);
 
   const cycleState = () => {
     const currentIndex = MOCK_STATES.indexOf(gameState);

@@ -1,60 +1,46 @@
-import type { IChartApi } from "lightweight-charts";
 import {
   useEffect,
   useMemo,
   useRef,
   type CSSProperties,
   type MutableRefObject,
-  type RefObject,
 } from "react";
 import { useChartSetup } from "./hooks/useChartSetup";
-import { useSecondPaneChartWebSocket } from "./hooks/useSecondPaneChartWebSocket";
-import { useSecondPaneChartOverlays } from "./hooks/useSecondPaneChartOverlays";
+import { useMirrorWebSocket } from "./hooks/useMirrorWebSocket";
+import { useMirrorChartOverlays } from "./hooks/useMirrorChartOverlays";
 import { resolveGameConfig, type TradingChartGameConfig } from "./types";
 import type {
   ChartDualSync,
-  GameRoundWindow,
-} from "./hooks/useSecondPaneChartWebSocket";
+  MirrorGameWindow,
+} from "./hooks/useMirrorWebSocket";
 import styles from "./TradingChart.module.css";
 
-export interface SecondPaneChartProps {
+export interface OpponentMirrorChartProps {
   wsUrl: string;
   coin?: string;
   gameConfig?: TradingChartGameConfig;
-  /** Same round window as main `TradingChart` [T0, end]. */
-  gameWindow?: GameRoundWindow | null;
-  /** When main chart is locked: shared logical view, price band, bar spacing, time format. */
+  /** Ana `TradingChart` ile aynı tur [T0, tur sonu]; veri ve eksen sol ile hizalanır. */
+  gameWindow?: MirrorGameWindow | null;
+  /** Ana grafik kilitlendiğinde tam senkron (mantıksal görünüm, fiyat, barSpacing, zaman formatı). */
   dualSync?: ChartDualSync | null;
-  /** Main chart `fixedPriceRangeRef` — Y-axis matches left pane. */
+  /** `TradingChart` içinden: ana grafiğin `fixedPriceRangeRef` — dikey ölçek birebir aynı olur. */
   mainChartPriceRangeRef?: MutableRefObject<{
-    from: number;
-    to: number;
-  } | null> | null;
-  /** Bumps when main price band updates; dual column reasserts Y scale. */
-  mainPriceRangeVersion?: number;
-  /** Sol chart API — kilit + çift sütunda görünür mantıksal aralık birebir kopyalanır. */
-  mainChartRef?: RefObject<IChartApi | null> | null;
-  /** Ana grafik `fixedLogicalRangeRef` — zaman ekseni sol ile aynı sayısal aralıkta kilitlenir. */
-  mainChartLogicalRangeRef?: MutableRefObject<{
     from: number;
     to: number;
   } | null> | null;
 }
 
 /**
- * Right column chart: same candle stream and phase overlays as the main chart, read-only (no drawing tools).
+ * Sonuç ekranı sağ panel: sol ile aynı mum akışı ve faz overlay’leri — çizim araçları yok.
  */
-export function SecondPaneChart({
+export function OpponentMirrorChart({
   wsUrl,
   coin = "BTC",
   gameConfig: gameConfigProp,
   gameWindow,
   dualSync,
   mainChartPriceRangeRef,
-  mainPriceRangeVersion,
-  mainChartRef,
-  mainChartLogicalRangeRef,
-}: SecondPaneChartProps) {
+}: OpponentMirrorChartProps) {
   const gameConfig = useMemo(
     () => resolveGameConfig(gameConfigProp),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -78,7 +64,7 @@ export function SecondPaneChart({
     lastValueVisible: true,
     disableChartScroll: true,
   });
-  useSecondPaneChartWebSocket({
+  useMirrorWebSocket({
     wsUrl,
     coin,
     chartRef,
@@ -88,18 +74,16 @@ export function SecondPaneChart({
     dualSyncRef,
     dualSync: dualSync ?? null,
     mainChartPriceRangeRef: mainChartPriceRangeRef ?? null,
-    mainPriceRangeVersion,
-    mainChartRef: mainChartRef ?? null,
-    mainChartLogicalRangeRef: mainChartLogicalRangeRef ?? null,
   });
 
+  /** Çift panelde ana grafik `lastValueVisible: false` — halka / etiket farkı olmasın */
   useEffect(() => {
     const s = seriesRef.current;
     if (!s) return;
     s.applyOptions({ lastValueVisible: dualSync == null });
   }, [dualSync, seriesRef]);
 
-  useSecondPaneChartOverlays(
+  useMirrorChartOverlays(
     chartRef,
     chartAreaRef,
     lineT0Ref,
@@ -113,7 +97,7 @@ export function SecondPaneChart({
   );
 
   return (
-    <div className={styles.secondPaneChartRoot}>
+    <div className={styles.opponentMirrorRoot}>
       <div className={styles.chartInfoBar} aria-label="Trading pair">
         {coin}/USDC
       </div>
@@ -149,7 +133,7 @@ export function SecondPaneChart({
             ref={containerRef}
             className={`${styles.chart} ${styles.chartScrollLocked}`}
             tabIndex={-1}
-            aria-label="Chart — drawing tools disabled"
+            aria-label="Grafik — fırça çizimi yok"
           />
         </div>
       </div>

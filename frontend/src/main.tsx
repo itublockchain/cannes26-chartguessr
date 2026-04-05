@@ -21,15 +21,15 @@ const arcTestnet = {
   iconUrls: [],
 };
 
-function TradingChartShell() {
+export function TradingChartShell() {
   return (
-    <div className="fixed inset-0 z-[100] flex min-h-0 min-w-0 flex-col bg-[#0c0f1a]">
+    <div className="fixed inset-0 z-[100] flex min-h-0 min-w-0 flex-col bg-white">
       <ChartPage />
     </div>
   );
 }
 
-function AppWithDynamic() {
+export function AppWithDynamic() {
   return (
     <DynamicContextProvider
       settings={{
@@ -42,14 +42,14 @@ function AppWithDynamic() {
         },
         cssOverrides: `
           .dynamic-widget-inline-controls {
-            background: rgba(255,255,255,0.05) !important;
-            border: 1px solid rgba(255,255,255,0.1) !important;
+            background: rgba(0,0,0,0.05) !important;
+            border: 1px solid rgba(0,0,0,0.1) !important;
             border-radius: 999px !important;
             padding: 0 16px !important;
             height: 38px !important;
-            font-family: 'Neue Haas Grotesk Display', sans-serif !important;
+            font-family: 'Satoshi', sans-serif !important;
             font-size: 12px !important;
-            color: rgba(255,255,255,0.4) !important;
+            color: rgba(0,0,0,0.4) !important;
             backdrop-filter: none !important;
             box-shadow: none !important;
             display: flex !important;
@@ -58,40 +58,40 @@ function AppWithDynamic() {
             gap: 8px !important;
           }
           .dynamic-widget-inline-controls:hover {
-            background: rgba(255,255,255,0.1) !important;
+            background: rgba(0,0,0,0.1) !important;
           }
           .dynamic-widget-inline-controls button,
           .dynamic-widget-inline-controls span,
           .dynamic-widget-inline-controls p,
           .dynamic-widget-inline-controls div {
-            font-family: 'Neue Haas Grotesk Display', sans-serif !important;
+            font-family: 'Satoshi', sans-serif !important;
             font-size: 13px !important;
             font-weight: 500 !important;
-            color: rgba(255,255,255,0.9) !important;
+            color: rgba(0,0,0,0.9) !important;
           }
           .connect-button {
-            background: rgba(99,156,230,0.14) !important;
-            border: 1px solid rgba(99,156,230,0.32) !important;
+            background: rgba(59,130,246,0.1) !important;
+            border: 1px solid rgba(59,130,246,0.2) !important;
             border-radius: 999px !important;
             padding: 0 20px !important;
             height: 38px !important;
-            font-family: 'Neue Haas Grotesk Display', sans-serif !important;
+            font-family: 'Satoshi', sans-serif !important;
             font-size: 13px !important;
             font-weight: 500 !important;
-            color: rgba(255,255,255,0.9) !important;
+            color: rgba(0,0,0,0.9) !important;
             letter-spacing: 0.01em !important;
             transition: background 0.2s, border-color 0.2s !important;
           }
           .connect-button:hover {
-            background: rgba(99,156,230,0.24) !important;
-            border-color: rgba(99,156,230,0.5) !important;
+            background: rgba(59,130,246,0.15) !important;
+            border-color: rgba(59,130,246,0.3) !important;
           }
           .dynamic-widget-inline-controls svg,
           .dynamic-widget-inline-controls svg path,
           .dynamic-widget-inline-controls svg circle {
-            fill: white !important;
-            stroke: white !important;
-            color: white !important;
+            fill: #374151 !important;
+            stroke: #374151 !important;
+            color: #374151 !important;
           }
         `,
       }}

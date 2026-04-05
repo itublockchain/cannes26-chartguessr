@@ -79,6 +79,22 @@ export function useTradingChartChartShellLayout(
         scaleMargins: { top: 0.2, bottom: 0.2 },
       },
     });
+
+    /*
+     * chart.applyOptions ile rightPriceScale değiştirildiğinde LW iç layout'u
+     * yeniden hesaplar — bu mevcut setVisibleRange'i ezebilir.
+     * Kilitli + çift panelde hemen fixedPriceRangeRef ile tekrar kilitle.
+     */
+    if (isLocked) {
+      const ser = seriesRef.current;
+      const logical = fixedLogicalRangeRef.current;
+      const price = fixedPriceRangeRef.current;
+      if (ser && logical && price) {
+        applyLockedViewport(chart, ser, logical, price);
+        scheduleReassertLockedViewport(chart, ser, logical, price);
+      }
+    }
+
     const rovId = requestAnimationFrame(() => {
       updateOverlays();
       requestAnimationFrame(() => redrawDevDrawingOverlay());
@@ -190,7 +206,7 @@ export function useTradingChartChartShellLayout(
   }, [
     isLocked,
     hasResultSidePane,
-    chartRef.current,
+    chartRef,
     updateOverlays,
     seriesRef,
     chartContainerRef,
@@ -205,5 +221,5 @@ export function useTradingChartChartShellLayout(
     brushPanViewportAppliedRef,
     viewportAnimationActiveRef,
     brushViewportAnimRafRef,
-  ]); // eslint-disable-line react-hooks/exhaustive-deps -- same pattern as TradingChart: chart identity via .current
+  ]);
 }

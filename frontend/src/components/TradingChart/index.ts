@@ -1,10 +1,10 @@
 export { TradingChart } from "./TradingChart";
-export { SecondPaneChart } from "./SecondPaneChart";
-export type { SecondPaneChartProps } from "./SecondPaneChart";
+export { OpponentMirrorChart } from "./OpponentMirrorChart";
+export type { OpponentMirrorChartProps } from "./OpponentMirrorChart";
 export type {
   ChartDualSync,
-  GameRoundWindow,
-} from "./hooks/useSecondPaneChartWebSocket";
+  MirrorGameWindow,
+} from "./hooks/useMirrorWebSocket";
 export { resolveGameConfig } from "./types";
 export type {
   TradingChartProps,

@@ -9,16 +9,35 @@ import {
 import { registerLinesPlugin } from "lightweight-charts-line-tools-lines";
 import { registerFreehandPlugin } from "lightweight-charts-line-tools-freehand";
 import { registerFibRetracementPlugin } from "lightweight-charts-line-tools-fib-retracement";
-import { ensureBaseLineToolOrphanUpdatesSilenced } from "../utils/baseLineToolSilenceOrphanUpdates";
 import { ensurePolygonRendererClippedToPane } from "../utils/polygonRendererPaneClip";
 import {
   ensureFreehandPaneViewsClamped,
   ensureFreehandPointToScreenClamped,
 } from "../utils/freehandPaneViewClamp";
+import { ensureSafeLineToolGetChart } from "../utils/safeLineToolGetChart";
 
 ensurePolygonRendererClippedToPane();
 ensureFreehandPointToScreenClamped();
-ensureBaseLineToolOrphanUpdatesSilenced();
+ensureSafeLineToolGetChart();
+
+/* Suppress noisy "[BaseLineTool] _requestUpdate is not set" warnings from line-tools-core.
+   These fire harmlessly during HMR/teardown when a tool briefly outlives its chart binding. */
+{
+  const _origWarn = console.warn;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  console.warn = (...args: any[]) => {
+    if (typeof args[0] === "string" && args[0].includes("_requestUpdate is not set")) return;
+    if (typeof args[0] === "string" && args[0].includes("Chart API not available")) return;
+    _origWarn.apply(console, args);
+  };
+
+  const _origError = console.error;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  console.error = (...args: any[]) => {
+    if (typeof args[0] === "string" && args[0].includes("[InteractionManager] Error detaching primitive")) return;
+    _origError.apply(console, args);
+  };
+}
 import {
   applyLockedViewport,
   reassertViewportAfterLineToolsPlugin,
@@ -88,7 +107,6 @@ function removeFinishedToolsOfType(
 function deselectAllLineTools(lineTools: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   _tools?: Map<string, any>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   _interactionManager?: { deselectAllTools?: () => void };
 }) {
   if (lineTools._tools) {
@@ -214,20 +232,29 @@ export function useLineTools({
     lineToolsRef.current = lineTools;
 
     const originalLog = console.log;
+    const originalWarn = console.warn;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     console.log = (...args: any[]) => {
       if (typeof args[0] === "string" && /registered line tool/i.test(args[0]))
         return;
       originalLog.apply(console, args);
     };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    console.warn = (...args: any[]) => {
+      if (typeof args[0] === "string" && args[0].includes("_requestUpdate is not set"))
+        return;
+      originalWarn.apply(console, args);
+    };
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       registerLinesPlugin(lineTools as any);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       registerFreehandPlugin(lineTools as any);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       registerFibRetracementPlugin(lineTools as any);
     } finally {
       console.log = originalLog;
+      console.warn = originalWarn;
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -286,8 +313,6 @@ export function useLineTools({
   }, [
     chartRef,
     seriesRef,
-    fixedLogicalRangeRef,
-    fixedPriceRangeRef,
     schedulePersistGameDrawingsRef,
     scheduleResumeLivePriceFollow,
   ]);
@@ -429,7 +454,11 @@ export function useLineTools({
   }, []);
 
   const cleanup = useCallback(() => {
-    lineToolsRef.current?.removeAllLineTools();
+    try {
+      lineToolsRef.current?.removeAllLineTools();
+    } catch {
+      // Swallow — series/chart may already be detached during teardown / HMR
+    }
     lineToolsRef.current = null;
   }, []);
 

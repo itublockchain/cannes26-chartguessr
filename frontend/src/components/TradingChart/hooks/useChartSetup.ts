@@ -1,4 +1,4 @@
-import { useEffect, useRef, type MutableRefObject } from "react";
+import { useEffect, useRef } from "react";
 import {
   AreaSeries,
   ColorType,
@@ -81,11 +81,6 @@ export interface UseChartSetupOptions {
   lastValueVisible?: boolean;
   /** Ayna / salt-okunur: yatay sürükleme ve dokunma kaydırmayı kapatır. */
   disableChartScroll?: boolean;
-  /**
-   * `chart.remove()` öncesi — line-tools gibi eklentiler hâlâ geçerli Chart API ile detach edilir.
-   * Ref üst bileşen her render’da günceller; effect dependency’ye alınmaz.
-   */
-  beforeChartRemoveRef?: MutableRefObject<(() => void) | null>;
 }
 
 export function useChartSetup(
@@ -100,12 +95,7 @@ export function useChartSetup(
     const container = containerRef.current;
     if (!container) return;
 
-    /** Tam sayı boyut: çift panelde iki chart aynı CSS genişliğinde olsa bile alt-piksel tuval farkı olmasın. */
-    const sized = () => ({
-      width: Math.max(0, Math.floor(container.clientWidth)),
-      height: Math.max(0, Math.floor(container.clientHeight)),
-    });
-    const { width: chartW, height: chartH } = sized();
+    const { clientWidth, clientHeight } = container;
 
     /** Oyun penceresi setVisibleLogicalRange ile yatayda sınırlı; fiyat bandı kodla sabit — eksende dikey kaydırma yok. */
     const defaultBarSpacing = 6;
@@ -119,8 +109,8 @@ export function useChartSetup(
     const scrollLocked = options?.disableChartScroll === true;
 
     const chart = createChart(container, {
-      width: chartW,
-      height: chartH,
+      width: clientWidth,
+      height: clientHeight,
       handleScroll: {
         mouseWheel: false,
         pressedMouseMove: !scrollLocked,
@@ -136,11 +126,11 @@ export function useChartSetup(
       kineticScroll: { touch: false, mouse: false },
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#d6dde8",
+        textColor: "#334155",
       },
       grid: {
-        vertLines: { color: "rgba(255, 255, 255, 0.04)" },
-        horzLines: { color: "rgba(255, 255, 255, 0.04)" },
+        vertLines: { color: "rgba(0, 0, 0, 0.04)" },
+        horzLines: { color: "rgba(0, 0, 0, 0.04)" },
       },
       crosshair: {
         vertLine: { visible: false },
@@ -148,12 +138,12 @@ export function useChartSetup(
       },
       rightPriceScale: {
         visible: !hideRightPriceScale,
-        borderColor: "rgba(255, 255, 255, 0.1)",
+        borderColor: "rgba(0, 0, 0, 0.1)",
         scaleMargins: { top: 0.2, bottom: 0.2 },
         autoScale: false,
       },
       timeScale: {
-        borderColor: "rgba(255, 255, 255, 0.1)",
+        borderColor: "rgba(0, 0, 0, 0.1)",
         secondsVisible: true,
         timeVisible: true,
         shiftVisibleRangeOnNewBar: false,
@@ -192,25 +182,49 @@ export function useChartSetup(
       crosshairMarkerVisible: true,
     });
 
+    /*
+     * LW charts: rightPriceScale.visible=false ile oluşturulduğunda scaleMargins
+     * düzgün uygulanmıyor (varsayılan bottom:0.1'e düşüyor). Series eklendikten
+     * sonra açıkça yeniden uygula.
+     */
+    if (hideRightPriceScale) {
+      const ps = series.priceScale();
+      ps.applyOptions({ scaleMargins: { top: 0.2, bottom: 0.2 } });
+    }
+
     chartRef.current = chart;
     seriesRef.current = series;
 
+    // DEBUG: global erişim
+    const debugKey = hideRightPriceScale ? '__debugMirrorChart' : '__debugMainChart';
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (window as any)[debugKey] = { chart, series };
+
     const resizeObserver = new ResizeObserver(() => {
-      const { width: w, height: h } = sized();
-      chart.applyOptions({ width: w, height: h });
+      chart.applyOptions({
+        width: container.clientWidth,
+        height: container.clientHeight,
+      });
     });
     resizeObserver.observe(container);
 
     return () => {
       resizeObserver.disconnect();
+      // Remove all attached primitives (line tools) before destroying the chart
+      // to prevent "Chart API not available" errors during teardown paint cycles.
       try {
-        options?.beforeChartRemoveRef?.current?.();
-      } catch {
-        /* line-tools teardown best-effort */
-      }
-      chart.remove();
+        const s = seriesRef.current;
+        if (s) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const primitives = (s as any).attachedPrimitives?.() ?? [];
+          for (const p of primitives) {
+            try { s.detachPrimitive(p); } catch { /* ignore */ }
+          }
+        }
+      } catch { /* ignore */ }
       seriesRef.current = null;
       chartRef.current = null;
+      chart.remove();
     };
   }, [
     containerRef,

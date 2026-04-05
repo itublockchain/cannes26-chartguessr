@@ -80,56 +80,10 @@ export function applyDrawingConstraints(
         }
       }
 
-      const cfg = () => gameConfigRef.current;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const getTs = (p: any) => p.time ?? p.timestamp ?? p.logical ?? 0;
-
-      let targetTs = getTs(newPoint);
-      /**
-       * Fırça bandının sol çizgisi (tTah) ile LW hit-test zamanı birebir değil;
-       * hızlı stroke’ta ilk birkaç nokta tTah−Δ oluyor → checkBounds drop → görünür boşluk.
-       */
-      const BRUSH_EDGE_SLACK_UNIX_SEC = 3;
-      const BRUSH_EDGE_SLACK_LOGICAL = 1;
-      const tTahSnap = gameTahminEndTimeRef.current;
-      const tBrushEndSnap = gameBrushZoneEndTimeRef.current;
-      const loSnap = gameStartLogicalRef.current;
-
-      let workingPoint = newPoint;
-      if (targetTs > 1_000_000_000 && tTahSnap != null && tBrushEndSnap != null) {
-        let adj = targetTs;
-        if (adj < tTahSnap && tTahSnap - adj <= BRUSH_EDGE_SLACK_UNIX_SEC) {
-          adj = tTahSnap;
-        } else if (
-          adj > tBrushEndSnap &&
-          adj - tBrushEndSnap <= BRUSH_EDGE_SLACK_UNIX_SEC
-        ) {
-          adj = tBrushEndSnap;
-        }
-        if (adj !== targetTs) {
-          workingPoint = { ...newPoint };
-          if (newPoint.time !== undefined) workingPoint.time = adj;
-          if (newPoint.timestamp !== undefined) workingPoint.timestamp = adj;
-          targetTs = adj;
-        }
-      } else if (
-        targetTs <= 1_000_000_000 &&
-        loSnap !== null
-      ) {
-        const barTah = loSnap + cfg().tahminEndOffsetBars;
-        const barEnd = loSnap + cfg().brushZoneEndOffsetBars;
-        let adj = targetTs;
-        if (adj < barTah && barTah - adj <= BRUSH_EDGE_SLACK_LOGICAL) {
-          adj = barTah;
-        } else if (adj > barEnd && adj - barEnd <= BRUSH_EDGE_SLACK_LOGICAL) {
-          adj = barEnd;
-        }
-        if (adj !== targetTs) {
-          workingPoint = { ...newPoint };
-          if (newPoint.logical !== undefined) workingPoint.logical = adj;
-          targetTs = adj;
-        }
-      }
+      const getTs = (p: any) => p.time ?? p.timestamp ?? 0;
+      const targetTs = getTs(newPoint);
+      const cfg = () => gameConfigRef.current;
 
       const checkBounds = (ts: number): boolean => {
         const tObs = gameObservationEndTimeRef.current;
@@ -165,8 +119,6 @@ export function applyDrawingConstraints(
       };
 
       if (!checkBounds(targetTs)) return;
-
-      const point = workingPoint;
 
       const isGloballyUnique = (ts: number): boolean => {
         if (lineToolsRef.current && lineToolsRef.current._tools) {
@@ -235,13 +187,13 @@ export function applyDrawingConstraints(
             const maxGap = cfg().brushInterpolationMaxGapExclusive;
             if (diff > 1 && diff < maxGap) {
               const p1 = newLast.price;
-              const p2 = point.price;
+              const p2 = newPoint.price;
               for (let fillTs = newLastTs + 1; fillTs < targetTs; fillTs++) {
                 if (!checkBounds(fillTs)) continue;
                 if (!isGloballyUnique(fillTs)) continue;
 
                 const ratio = (fillTs - newLastTs) / diff;
-                const interpPoint = { ...point };
+                const interpPoint = { ...newPoint };
                 if (interpPoint.time !== undefined) interpPoint.time = fillTs;
                 if (interpPoint.timestamp !== undefined)
                   interpPoint.timestamp = fillTs;
@@ -253,7 +205,7 @@ export function applyDrawingConstraints(
                 ) {
                   interpPoint.logical =
                     newLast.logical +
-                    (point.logical - newLast.logical) * ratio;
+                    (newPoint.logical - newLast.logical) * ratio;
                 } else {
                   delete interpPoint.logical;
                 }
@@ -267,7 +219,7 @@ export function applyDrawingConstraints(
 
       if (!isGloballyUnique(targetTs)) return;
 
-      originalAddPoint.call(this, point);
+      originalAddPoint.call(this, newPoint);
     };
   };
 

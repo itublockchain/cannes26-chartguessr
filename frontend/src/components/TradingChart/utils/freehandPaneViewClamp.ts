@@ -1,16 +1,10 @@
-import type {
-  IChartApiBase,
-  ISeriesApi,
-  SeriesType,
-  UTCTimestamp,
-} from "lightweight-charts";
+import type { ISeriesApi, SeriesType, UTCTimestamp } from "lightweight-charts";
 import {
   BaseLineTool,
   Point,
   type AnchorPoint,
 } from "lightweight-charts-line-tools-core";
 import { LineToolBrush, LineToolHighlighter } from "lightweight-charts-line-tools-freehand";
-import { drawingPointToPanePixel } from "./devDrawingPointsCanvas";
 
 /** Her Brush / Highlighter pane view sınıfı için bir kez _updateImpl sarılır. */
 const patchedViewClasses = new WeakSet<object>();
@@ -18,10 +12,10 @@ const patchedViewClasses = new WeakSet<object>();
 let pointToScreenPatched = false;
 
 /**
- * Fırça: `timeToCoordinate(ts)` çoğu mum zamanında X’i mum merkeziyle hizalamıyor; alan serisi
- * indeks mantığıyla çizildiği için beyaz çizgi turuncudan “yukarıda / kaymış” görünebiliyor.
- * X için `drawingPointToPanePixel` (interpolateLogicalIndexFromTime + logicalToCoordinate),
- * Y için seri `priceToCoordinate` — olmazsa paket yolu. Sonra pane içi clamp.
+ * Fırça: line-tools paketi `interpolateLogicalIndexFromTime` + `logicalToCoordinate` kullanıyor;
+ * LW zaman ölçeği / görünür aralık / autoscale sonrası bu X, grafik mumlarıyla kayabiliyor.
+ * Önce `timeToCoordinate` + `priceToCoordinate` (seri ile aynı uzay), olmazsa paket yolu.
+ * Clamp: `paneSize` (koordinat uzayı ile uyumlu); yoksa pane HTMLElement.
  */
 export function ensureFreehandPointToScreenClamped(): void {
   if (pointToScreenPatched) return;
@@ -47,23 +41,16 @@ export function ensureFreehandPointToScreenClamped(): void {
       const ts = Number(point.timestamp ?? point.time);
       const pr = Number(point.price);
       if (Number.isFinite(ts) && Number.isFinite(pr)) {
-        const xy = drawingPointToPanePixel(
-          chart as IChartApiBase<UTCTimestamp>,
-          series as ISeriesApi<SeriesType, UTCTimestamp>,
-          ts,
-          pr,
-        );
-        if (xy) {
-          p = new Point(xy.x, xy.y);
+        const x = chart.timeScale().timeToCoordinate(ts as UTCTimestamp);
+        const y = series.priceToCoordinate(pr);
+        if (x !== null && y !== null) {
+          p = new Point(x, y);
         }
       }
     }
 
     if (!p) {
-      /* detached() sonrası hit-test / son kare: orig chart.timeScale() null’da patlar */
-      if (!this._chart || !this._series) {
-        return null;
-      }
+      if (!this._chart) return null;
       p = orig.call(this, point);
       if (!p) return p;
       if (this.toolType !== "Brush" && this.toolType !== "Highlighter") return p;

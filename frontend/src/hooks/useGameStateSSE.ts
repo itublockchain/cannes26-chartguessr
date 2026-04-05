@@ -1,63 +1,44 @@
-import { useEffect, useRef } from 'react';
-import type { GameStateEvent } from '../types/gameState';
+import { useEffect, useState } from 'react'
+import { useSSE } from '../context/SSEContext'
+import type { SSEEventType, SSEEventMap } from '../types/sse'
 
+/** Holds the latest event received from SSE */
+export interface LatestSSEEvent {
+  type: SSEEventType
+  data: SSEEventMap[SSEEventType]
+}
+
+/**
+ * Subscribes to all SSE events and returns the latest one.
+ * Must be used inside SSEProvider.
+ */
 export function useGameStateSSE() {
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const timeoutRef = useRef<number | null>(null);
+  const { on, connected } = useSSE()
+  const [latestEvent, setLatestEvent] = useState<LatestSSEEvent | null>(null)
 
   useEffect(() => {
-    const connect = () => {
-      const sseUrl = import.meta.env.VITE_GAME_SSE_URL;
-      
-      if (!sseUrl) {
-        console.error('[SSE] VITE_GAME_SSE_URL is not defined in environment variables!');
-        return;
-      }
+    const events: SSEEventType[] = [
+      'match_created',
+      'player_entered',
+      'match_locked',
+      'game_starting',
+      'price_tick',
+      'drawing_submitted',
+      'calculating',
+      'result',
+      'match_cancelled',
+    ]
 
-      console.log(`[SSE] Connecting to ${sseUrl}...`);
-      const eventSource = new EventSource(sseUrl);
-      eventSourceRef.current = eventSource;
+    const unsubs = events.map((eventName) =>
+      on(eventName, (data) => {
+        setLatestEvent({ type: eventName, data })
+      })
+    )
 
-      eventSource.onopen = () => {
-        console.log('[SSE] Connection opened successfully.');
-      };
-
-      eventSource.onmessage = (event) => {
-        try {
-          // Gelen event datası genellikle stringify edilmiş JSON objesidir.
-          const data = JSON.parse(event.data) as GameStateEvent;
-          
-          // State'leri console.log vasıtasıyla ekrana basıyoruz
-          console.log(`[SSE] Game State Received: ${data.state}`, data);
-        } catch (error) {
-          console.error('[SSE] Failed to parse message data:', event.data, error);
-        }
-      };
-
-      eventSource.onerror = (error) => {
-        console.error('[SSE] Connection Error. Closing connection and will reconnect in 10 seconds...', error);
-        
-        // Bağlantıyı temizle
-        eventSource.close();
-        eventSourceRef.current = null;
-
-        // 10 saniye (10000ms) sonra tekrar bağlanmayı dene
-        timeoutRef.current = window.setTimeout(connect, 10000);
-      };
-    };
-
-    // İlk bağlantıyı başlat
-    connect();
-
-    // Component unmount olduğunda cleanup işlemi
     return () => {
-      if (timeoutRef.current !== null) {
-        window.clearTimeout(timeoutRef.current);
-      }
-      if (eventSourceRef.current) {
-        console.log('[SSE] Cleaning up SSE connection.');
-        eventSourceRef.current.close();
-      }
-    };
-  }, []);
+      for (const unsub of unsubs) unsub()
+    }
+  }, [on])
+
+  return { latestEvent, connected }
 }

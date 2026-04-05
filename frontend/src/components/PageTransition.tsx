@@ -20,10 +20,10 @@ export const PageTransition: React.FC<PageTransitionProps> = ({ children }) => {
 
     if (transitioning) return;
 
-    setTransitioning(true);
-
     const el = containerRef.current;
     if (!el) return;
+
+    queueMicrotask(() => setTransitioning(true));
 
     // Exit animation — no filter/scale to preserve child backdrop-filter
     gsap.to(el, {
@@ -48,7 +48,7 @@ export const PageTransition: React.FC<PageTransitionProps> = ({ children }) => {
         );
       },
     });
-  }, [location.pathname]);
+  }, [location, displayLocation.pathname, transitioning]);
 
   return (
     <div

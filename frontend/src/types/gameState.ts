@@ -8,5 +8,5 @@ export type GameState =
 
 export interface GameStateEvent {
   state: GameState;
-  [key: string]: any; // Gerekirse sonradan gelecek extra alanlar için esneklik
+  [key: string]: unknown; // Gerekirse sonradan gelecek extra alanlar için esneklik
 }
