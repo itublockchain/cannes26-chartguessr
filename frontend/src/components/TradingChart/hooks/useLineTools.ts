@@ -44,7 +44,7 @@ import {
   visibleLogicalForChartAfterTool,
 } from "./useWebSocket";
 
-const LINE_TOOL_BRUSH_STROKE = "#ffffff";
+const LINE_TOOL_BRUSH_STROKE = "#000000";
 const LINE_TOOL_TREND_GRAY = "#94a3b8";
 
 const LIVE_PRICE_RANGE_RESUME_MS = 1000;

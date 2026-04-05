@@ -22,6 +22,8 @@ export interface UseTradingChartChartShellLayoutParams {
   chartShellRef: RefObject<HTMLDivElement | null>;
   isLocked: boolean;
   hasResultSidePane: boolean;
+  /** Slide animasyonu aktif: fiyat eksenini gizleme, viewport değiştirme */
+  slidePhase: "idle" | "sliding" | "settled";
   updateOverlays: () => void;
   redrawDevDrawingOverlay: () => void;
   fixedLogicalRangeRef: MutableRefObject<{ from: number; to: number } | null>;
@@ -49,6 +51,7 @@ export function useTradingChartChartShellLayout(
     chartShellRef,
     isLocked,
     hasResultSidePane,
+    slidePhase,
     updateOverlays,
     redrawDevDrawingOverlay,
     fixedLogicalRangeRef,
@@ -66,7 +69,11 @@ export function useTradingChartChartShellLayout(
     const chart = chartRef.current;
     if (!chart) return;
 
-    if (isLocked && hasResultSidePane) {
+    // Çift panel modunda ana grafiğin sağ fiyat ekseni daima gizli — fiyat
+    // yalnızca rakip grafiğin (en sağdaki) ekseninde gösterilir.
+    const hidePriceScale = isLocked && hasResultSidePane;
+
+    if (hidePriceScale && hasResultSidePane) {
       applyChartTimeScaleStyle(chart, "dualCompact");
     } else {
       applyChartTimeScaleStyle(chart, "full");
@@ -74,7 +81,7 @@ export function useTradingChartChartShellLayout(
 
     chart.applyOptions({
       rightPriceScale: {
-        visible: !isLocked,
+        visible: !hidePriceScale,
         autoScale: false,
         scaleMargins: { top: 0.2, bottom: 0.2 },
       },
@@ -206,6 +213,7 @@ export function useTradingChartChartShellLayout(
   }, [
     isLocked,
     hasResultSidePane,
+    slidePhase,
     chartRef,
     updateOverlays,
     seriesRef,

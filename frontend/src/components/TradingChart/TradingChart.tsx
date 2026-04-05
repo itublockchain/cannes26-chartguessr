@@ -8,6 +8,7 @@ import {
   cloneElement,
   isValidElement,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useCallback,
@@ -35,6 +36,7 @@ import {
   animateBrushZoneHalfScreenViewport,
   applyLockedViewport,
   brushZoneOnlyLogicalRange,
+
   reassertViewportAfterLineToolsPlugin,
   scheduleReassertLockedViewport,
   visibleLogicalForChartAfterTool,
@@ -106,6 +108,15 @@ export function TradingChart({
   const hasResultSidePane = resultSidePane != null;
   const hasResultSidePaneRef = useRef(hasResultSidePane);
   hasResultSidePaneRef.current = hasResultSidePane;
+
+  /** Slide animation: "idle" → "sliding" → "settled" */
+  const [slidePhase, setSlidePhase] = useState<
+    "idle" | "sliding" | "settled"
+  >("idle");
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
+  const slideLeftPaneRef = useRef<HTMLDivElement | null>(null);
+  const slideOpponentWrapperRef = useRef<HTMLDivElement | null>(null);
+  const slideOpponentInnerRef = useRef<HTMLDivElement | null>(null);
 
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [isLocked, setIsLocked] = useState(false);
@@ -592,6 +603,7 @@ export function TradingChart({
     chartShellRef,
     isLocked,
     hasResultSidePane,
+    slidePhase,
     updateOverlays,
     redrawDevDrawingOverlay,
     fixedLogicalRangeRef,
@@ -722,38 +734,45 @@ export function TradingChart({
   const updateOverlaysRef = useRef(updateOverlays);
   updateOverlaysRef.current = updateOverlays;
 
-  /** Kilit + ikiye bölünmüş layout: sol panelde yalnızca fırça bandı (ör. 60 mum) */
+  /**
+   * Kilit → panelleri anında final layout'a oturt.
+   * JS rAF animasyonu yok — CSS transition panel geçişini smooth yapar.
+   * Chart verisi (WS) kesintisiz akmaya devam eder; viewport brush-zone'a
+   * kilitlenir, ResizeObserver flex geçişi boyunca reassert eder.
+   */
   useEffect(() => {
     if (!isLocked) return;
-    let cancelled = false;
-    const outer = requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        if (cancelled) return;
-        const chart = chartRef.current;
-        const series = seriesRef.current;
-        const anchor = roundAnchorLogicalRef.current;
-        const cfg = gameConfigRef.current;
-        const price = fixedPriceRangeRef.current;
-        if (!chart || !series || anchor == null) return;
-        if (brushViewportAnimRafRef.current != null) {
-          cancelAnimationFrame(brushViewportAnimRafRef.current);
-          brushViewportAnimRafRef.current = null;
-        }
-        viewportAnimationActiveRef.current = false;
-        const brushOnly = brushZoneOnlyLogicalRange(anchor, cfg);
-        fixedLogicalRangeRef.current = brushOnly;
-        applyLockedViewport(chart, series, brushOnly, price);
-        scheduleReassertLockedViewport(chart, series, brushOnly, price);
-        requestAnimationFrame(() => {
-          updateOverlaysRef.current();
-        });
-      });
-    });
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(outer);
-    };
-  }, [isLocked]);
+    // Eski viewport animasyonunu iptal et
+    if (brushViewportAnimRafRef.current != null) {
+      cancelAnimationFrame(brushViewportAnimRafRef.current);
+      brushViewportAnimRafRef.current = null;
+    }
+    viewportAnimationActiveRef.current = false;
+    // brushPan'ı true yap ki performAfterTick tekrar eski animasyonu başlatmasın
+    brushPanViewportAppliedRef.current = true;
+
+    const chart = chartRef.current;
+    const series = seriesRef.current;
+    const anchor = roundAnchorLogicalRef.current;
+    const cfg = gameConfigRef.current;
+    const price = fixedPriceRangeRef.current;
+
+    if (chart && series && anchor != null) {
+      const brushOnly = brushZoneOnlyLogicalRange(anchor, cfg);
+      fixedLogicalRangeRef.current = brushOnly;
+      applyLockedViewport(chart, series, brushOnly, price);
+      scheduleReassertLockedViewport(chart, series, brushOnly, price);
+    }
+
+    // Anında settled'a geç — CSS transition panel boyutlarını smooth anime eder
+    setSlidePhase("settled");
+  }, [isLocked, hasResultSidePane]);
+
+  /** Settled'a geçtiğinde overlay'ları güncelle */
+  useLayoutEffect(() => {
+    if (slidePhase !== "settled") return;
+    requestAnimationFrame(() => updateOverlaysRef.current());
+  }, [slidePhase]);
 
   const onWsSnapshotLoaded = useCallback(() => {
     queueMicrotask(() => {
@@ -994,8 +1013,10 @@ export function TradingChart({
       />
 
       <div className={styles.mainColumn}>
-        <div className={styles.chartWorkspace}>
+        <div ref={workspaceRef} className={styles.chartWorkspace}>
+          {/* ── Sol panel (ana grafik) ── */}
           <div
+            ref={slideLeftPaneRef}
             className={cn(
               styles.chartLeftPane,
               isLocked ? styles.chartLeftPaneHalf : styles.chartLeftPaneFull,
@@ -1052,22 +1073,34 @@ export function TradingChart({
               </div>
             </div>
           </div>
+
+          {/* ── Sağ panel: isLocked olunca anında mount, CSS transition ile fade-in ── */}
           {isLocked ? (
             <>
               <div className={styles.chartWorkspaceDivider} aria-hidden />
               <div
-                className={styles.chartRightPlaceholder}
+                ref={slideOpponentWrapperRef}
+                className={cn(
+                  styles.chartRightPlaceholder,
+                  styles.chartRightPlaceholderVisible,
+                )}
                 aria-label={resultSidePane ? "Rakip grafiği" : undefined}
               >
-                {isValidElement(resultSidePane)
-                  ? cloneElement(
-                      resultSidePane as ReactElement<OpponentMirrorChartProps>,
-                      {
-                        dualSync: paneDualSync,
-                        mainChartPriceRangeRef: fixedPriceRangeRef,
-                      },
-                    )
-                  : (resultSidePane ?? null)}
+                <div
+                  ref={slideOpponentInnerRef}
+                  className={styles.slideOpponentInnerSettled}
+                >
+                  {isValidElement(resultSidePane)
+                    ? cloneElement(
+                        resultSidePane as ReactElement<OpponentMirrorChartProps>,
+                        {
+                          dualSync: paneDualSync,
+                          mainChartPriceRangeRef: fixedPriceRangeRef,
+                          showRightPriceScale: true,
+                        },
+                      )
+                    : (resultSidePane ?? null)}
+                </div>
               </div>
             </>
           ) : null}

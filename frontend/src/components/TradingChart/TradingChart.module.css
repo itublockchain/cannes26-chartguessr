@@ -180,10 +180,11 @@
   flex: 1 1 100%;
 }
 
-/** Oyun bitince: sol yarı grafik, sağ yarı yer tutucu */
+/** Oyun bitince: sol yarı grafik, sağ yarı yer tutucu — CSS transition ile smooth geçiş */
 .chartLeftPaneHalf {
   flex: 1 1 0;
   min-width: 0;
+  transition: flex 0.6s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /** Ayırıcı tuval genişliğini border ile çalmaz; iki panel iç genişliği birebir eşit kalır */
@@ -203,6 +204,22 @@
   flex-direction: column;
   background: #ffffff;
   overflow: hidden;
+  transition: flex 0.6s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.5s ease 0.1s;
+}
+
+/** Sağ panel ilk mount'ta görünmez başlar, CSS transition ile fade-in */
+.chartRightPlaceholderEntering {
+  opacity: 0;
+}
+
+.chartRightPlaceholderVisible {
+  opacity: 1;
+}
+
+/** Sağ panel inner: parent'ı doldurur */
+.slideOpponentInnerSettled {
+  display: contents;
 }
 
 /**

@@ -28,6 +28,8 @@ export interface OpponentMirrorChartProps {
     from: number;
     to: number;
   } | null> | null;
+  /** Sağ fiyat eksenini göster (slide animasyonundan sonra en sağda sabit kalır). */
+  showRightPriceScale?: boolean;
 }
 
 /**
@@ -40,6 +42,7 @@ export function OpponentMirrorChart({
   gameWindow,
   dualSync,
   mainChartPriceRangeRef,
+  showRightPriceScale = false,
 }: OpponentMirrorChartProps) {
   const gameConfig = useMemo(
     () => resolveGameConfig(gameConfigProp),
@@ -60,7 +63,7 @@ export function OpponentMirrorChart({
   dualSyncRef.current = dualSync ?? null;
 
   const { chartRef, seriesRef } = useChartSetup(containerRef, undefined, {
-    hideRightPriceScale: true,
+    hideRightPriceScale: !showRightPriceScale,
     lastValueVisible: true,
     disableChartScroll: true,
   });
