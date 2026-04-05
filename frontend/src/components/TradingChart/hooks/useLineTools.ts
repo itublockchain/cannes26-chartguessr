@@ -138,7 +138,18 @@ export function freezeAllBrushStrokes(
   }
 }
 
-/** Fırça (60 sn) alanı başlarken: trend, fib, yatay vb. silinir; fırça segmentleri kalır. */
+/** Fırça (60 sn) alanı başlarken: trend, fib, yatay vb. silinir; fırça segmentleri kalır.
+ *
+ *  Bug workaround: lightweight-charts-line-tools `removeLineToolsById` nullifies
+ *  each tool's internal `_chart` reference, but the tool's pane view stays registered
+ *  in the chart render pipeline.  The next paint (triggered by WS price ticks via
+ *  `series.update()`) calls `pointToScreenPoint` / `getViewportBounds` which access
+ *  `this._chart.timeScale()` → crash.
+ *
+ *  Fix: after removal, temporarily restore each tool's `_chart` so any pending
+ *  renders complete safely.  After two animation frames (enough for the chart to
+ *  flush its render queue and unregister the primitives) we null them for GC.
+ */
 export function removeNonBrushLineTools(
   lineTools: {
     removeLineToolsById: (ids: string[]) => void;
@@ -148,11 +159,32 @@ export function removeNonBrushLineTools(
 ): void {
   if (!lineTools?._tools) return;
   const ids: string[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const toolRefs: { tool: any; chart: any }[] = [];
   for (const [id, tool] of lineTools._tools) {
     if (tool?.toolType === "Brush") continue;
     ids.push(id);
+    toolRefs.push({ tool, chart: tool._chart });
   }
-  if (ids.length > 0) lineTools.removeLineToolsById(ids);
+  if (ids.length === 0) return;
+
+  lineTools.removeLineToolsById(ids);
+
+  // Restore _chart so pending renders don't hit null
+  for (const { tool, chart } of toolRefs) {
+    if (tool._chart === null && chart) {
+      tool._chart = chart;
+    }
+  }
+
+  // After render pipeline flushes, release for GC
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      for (const { tool } of toolRefs) {
+        try { tool._chart = null; } catch { /* already cleaned up */ }
+      }
+    });
+  });
 }
 
 interface UseLineToolsParams {
