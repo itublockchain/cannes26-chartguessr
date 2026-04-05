@@ -264,6 +264,16 @@ export function useMirrorWebSocket({
 
   const syncPriceFromMain = mainChartPriceRangeRef != null;
 
+  /* Expose refs so the component can reassert viewport on container resize. */
+  const viewportRefs = useRef({
+    fixedLogicalRangeRef,
+    fixedPriceRangeRef,
+  });
+  viewportRefs.current = {
+    fixedLogicalRangeRef,
+    fixedPriceRangeRef,
+  };
+
   useEffect(() => {
     const chart = chartRef.current;
     const series = seriesRef.current;
@@ -585,4 +595,6 @@ export function useMirrorWebSocket({
     mainChartPriceRangeRef,
     syncPriceFromMain,
   ]);
+
+  return { fixedLogicalRangeRef, fixedPriceRangeRef };
 }
