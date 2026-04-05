@@ -750,13 +750,30 @@ export function useWebSocket({
           onCandleTick();
 
           if (snapshotLoadedRef.current) {
-            // NOTE: Price scale is locked from snapshot.
-            // Per-tick rescaling (refreshLockedPriceRangeFromLiveSeries)
-            // and viewport reassertion (scheduleReassertLockedViewport)
-            // are DISABLED here because they cause instant Y-axis jumps
-            // that override the smooth price animation.
-            // The price range is wide enough from snapshot to accommodate
-            // the small live tick movements within the game round.
+            // Fiyat mevcut aralığın dışına çıktıysa aralığı genişlet;
+            // aralık içindeyse dokunma (gereksiz Y zıplaması olmasın).
+            const curRange = fixedPriceRangeRef.current;
+            if (curRange) {
+              const lo = Math.min(data.low, data.close);
+              const hi = Math.max(data.high, data.close);
+              if (lo < curRange.from || hi > curRange.to) {
+                refreshLockedPriceRangeFromLiveSeries(
+                  series,
+                  fixedPriceRangeRef,
+                  gameConfig,
+                  lastLiveWickRef.current,
+                );
+                const logicalLive = fixedLogicalRangeRef.current;
+                if (logicalLive && !viewportAnimationActiveRef.current) {
+                  scheduleReassertLockedViewport(
+                    chart,
+                    series,
+                    logicalLive,
+                    fixedPriceRangeRef.current,
+                  );
+                }
+              }
+            }
           }
 
           if (!snapshotLoadedRef.current) {
