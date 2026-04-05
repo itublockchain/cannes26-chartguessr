@@ -217,9 +217,9 @@ The game utilizes a **Custom Runtime Environment (CRE)** to evaluate player perf
 4. **Final Settlement:** The player with the lowest RMSE score (highest accuracy) is declared the winner on-chain.           
 
 ## Team
--[Feyyaz Numan Cavlak](https://github.com/feyyazcigim)   
--[Ali Eren Kara](https://github.com/Allie198)   
--[Batıkan Kutluer](https://github.com/batikankutluer)   
--[Mehmet Eren Kırkaş ](https://github.com/eren-cmj)    
+- [Feyyaz Numan Cavlak](https://github.com/feyyazcigim)   
+- [Ali Eren Kara](https://github.com/Allie198)   
+- [Batıkan Kutluer](https://github.com/batikankutluer)   
+- [Mehmet Eren Kırkaş ](https://github.com/eren-cmj)    
 
 Built by ITU Blockchain at ETHGlobal Cannes 2026 readme nasıl
