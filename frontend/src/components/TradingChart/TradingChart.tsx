@@ -64,6 +64,7 @@ export function TradingChart({
   wsUrl,
   coin: coinProp,
   gameConfig: gameConfigProp,
+  externalPhase,
   onDrawingComplete,
   onGameStateChange,
   onDrawingToolbarChange,
@@ -89,6 +90,8 @@ export function TradingChart({
   const activeToolRef = useRef<string | null>(null);
   const isLockedRef = useRef(false);
   const brushAllowedRef = useRef(false);
+  /** SSE-driven drawing phase: bypass candle-timestamp temporal gate in constraints */
+  const externalDrawingPhaseRef = useRef(false);
   /** Oyun penceresi veya line-tools henüz yokken seçilen araç; hazır olunca bir kez addTool ile uygulanır */
   const pendingToolRef = useRef<string | null>(null);
   const roundAnchorLogicalRef = useRef<number | null>(null);
@@ -518,7 +521,7 @@ export function TradingChart({
   const tryApplyPendingTool = useCallback(() => {
     const p = pendingToolRef.current;
     if (!p || isLockedRef.current) return;
-    if (p === "Brush" && !brushAllowedRef.current) return;
+    if (p === "Brush" && !brushAllowedRef.current && !externalDrawingPhaseRef.current) return;
     if (!lineToolsRef.current || !fixedLogicalRangeRef.current) return;
     pendingToolRef.current = null;
     addToolWithDevClear(p, { replacePreviousOfSameKind: p === "Brush" });
@@ -562,6 +565,7 @@ export function TradingChart({
       lastTimeRef,
       gameConfigRef,
       chartDebugModeRef,
+      externalDrawingPhaseRef,
     );
     initLineTools();
 
@@ -616,6 +620,9 @@ export function TradingChart({
   }, [isLocked, hasResultSidePane, seriesRef.current]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const syncPhaseAndMaybeAutoBrush = useCallback(() => {
+    // When externalPhase is driving the game, skip candle-based phase detection
+    if (externalPhase) return;
+
     const t0 = gameStartTimeRef.current;
     const lt = lastTimeRef.current;
     const obsEnd = gameObservationEndTimeRef.current;
@@ -641,6 +648,7 @@ export function TradingChart({
       return phase;
     });
   }, [
+    externalPhase,
     addToolWithDevClear,
     updateActiveTool,
     lineToolsRef,
@@ -722,7 +730,7 @@ export function TradingChart({
   const updateOverlaysRef = useRef(updateOverlays);
   updateOverlaysRef.current = updateOverlays;
 
-  /** Kilit + ikiye bölünmüş layout: sol panelde yalnızca fırça bandı (ör. 60 mum) */
+  /** Kilit + ikiye bölünmüş layout: fırça bandı varsa onu göster, yoksa tahmin bölgesi + bağlam */
   useEffect(() => {
     if (!isLocked) return;
     let cancelled = false;
@@ -740,10 +748,11 @@ export function TradingChart({
           brushViewportAnimRafRef.current = null;
         }
         viewportAnimationActiveRef.current = false;
-        const brushOnly = brushZoneOnlyLogicalRange(anchor, cfg);
-        fixedLogicalRangeRef.current = brushOnly;
-        applyLockedViewport(chart, series, brushOnly, price);
-        scheduleReassertLockedViewport(chart, series, brushOnly, price);
+
+        const lockedRange = brushZoneOnlyLogicalRange(anchor, cfg);
+        fixedLogicalRangeRef.current = lockedRange;
+        applyLockedViewport(chart, series, lockedRange, price);
+        scheduleReassertLockedViewport(chart, series, lockedRange, price);
         requestAnimationFrame(() => {
           updateOverlaysRef.current();
         });
@@ -796,6 +805,50 @@ export function TradingChart({
     viewportAnimationActiveRef,
     onGameRoundWindowKnown: onRoundWindowFromWs,
   });
+
+  // SSE-driven phase override: when backend says "drawing", force phase 2 + activate brush
+  useEffect(() => {
+    if (!externalPhase) return;
+    externalDrawingPhaseRef.current = externalPhase === 2;
+    setGamePhase((prev) => {
+      if (prev === externalPhase) return prev;
+      // Phase 1→2 transition: auto-activate brush
+      if (externalPhase === 2 && !isLockedRef.current) {
+        // Set pendingTool so brush activates even if lineTools isn't ready yet
+        pendingToolRef.current = "Brush";
+        queueMicrotask(() => {
+          if (!isLockedRef.current && lineToolsRef.current) {
+            addToolWithDevClear("Brush");
+            updateActiveTool("Brush");
+            requestAnimationFrame(() => {
+              chartContainerRef.current?.focus({ preventScroll: true });
+            });
+          }
+        });
+      }
+      // Phase 2→3 transition: lock the game (submit drawings)
+      if (externalPhase === 3 && !isLockedRef.current) {
+        queueMicrotask(() => {
+          if (!isLockedRef.current) {
+            const segments = drawingSegmentsRef.current;
+            console.log("[Drawing — external lock]", {
+              segments,
+              flatPoints: segments.flat(),
+              segmentCount: segments.length,
+              totalPoints: segments.reduce((n, s) => n + s.length, 0),
+            });
+            pendingToolRef.current = null;
+            setIsLocked(true);
+            lockAllTools();
+            if (activeToolRef.current) updateActiveTool(null);
+            deactivateDrawingMode();
+            emitDrawingCapability("external-phase-locked", { forceLog: true });
+          }
+        });
+      }
+      return externalPhase;
+    });
+  }, [externalPhase, addToolWithDevClear, updateActiveTool, lineToolsRef, lockAllTools, deactivateDrawingMode, emitDrawingCapability]);
 
   const brushAllowed = !isLocked && (chartDebugMode || gamePhase === 2);
 
@@ -879,10 +932,10 @@ export function TradingChart({
       drawingUndoStackRef.current.push({ id: finishedId, toolType: type });
     }
     if (isLockedRef.current) return;
-    if (type === "Brush" && !brushAllowedRef.current) return;
+    if (type === "Brush" && !brushAllowedRef.current && !externalDrawingPhaseRef.current) return;
     queueMicrotask(() => {
       if (isLockedRef.current) return;
-      if (type === "Brush" && !brushAllowedRef.current) return;
+      if (type === "Brush" && !brushAllowedRef.current && !externalDrawingPhaseRef.current) return;
       addToolRef.current(type, { replacePreviousOfSameKind: false });
       requestAnimationFrame(() => {
         chartContainerRef.current?.focus({ preventScroll: true });

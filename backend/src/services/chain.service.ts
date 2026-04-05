@@ -34,6 +34,18 @@ const escrowAbi = [
   },
   {
     type: "function",
+    name: "settleMatch",
+    inputs: [
+      { name: "matchId", type: "bytes32" },
+      { name: "winner", type: "address" },
+      { name: "startPrice", type: "int256" },
+      { name: "endPrice", type: "int256" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
     name: "cancelMatch",
     inputs: [{ name: "matchId", type: "bytes32" }],
     outputs: [],
@@ -93,6 +105,18 @@ let publicClient: ReturnType<typeof createPublicClient>;
 let walletClient: ReturnType<typeof createWalletClient>;
 let operatorAccount: ReturnType<typeof privateKeyToAccount>;
 
+/**
+ * Simple transaction queue — serializes all operator wallet transactions
+ * to prevent nonce collisions from concurrent calls.
+ */
+let txQueue: Promise<void> = Promise.resolve();
+function enqueueTx<T>(fn: () => Promise<T>): Promise<T> {
+  const p = txQueue.then(fn, fn);
+  // Update the queue tail (swallow errors so the queue continues)
+  txQueue = p.then(() => {}, () => {});
+  return p;
+}
+
 export function init() {
   operatorAccount = privateKeyToAccount(env.operatorPrivateKey as Hex);
 
@@ -112,35 +136,94 @@ export function init() {
 
 const contractAddress = () => env.escrowContractAddress as Address;
 
-export async function createMatch(
+export function getOperatorAddress(): string {
+  return operatorAccount.address;
+}
+
+export function createMatch(
   matchId: Hex,
   player1: Address,
   player2: Address,
   entryFee: bigint
 ): Promise<Hex> {
-  const hash = await walletClient.writeContract({
-    chain: arcTestnet,
-    account: operatorAccount,
-    address: contractAddress(),
-    abi: escrowAbi,
-    functionName: "createMatch",
-    args: [matchId, player1, player2, entryFee],
+  return enqueueTx(async () => {
+    const hash = await walletClient.writeContract({
+      chain: arcTestnet,
+      account: operatorAccount,
+      address: contractAddress(),
+      abi: escrowAbi,
+      functionName: "createMatch",
+      args: [matchId, player1, player2, entryFee],
+    });
+    await publicClient.waitForTransactionReceipt({ hash });
+    return hash;
   });
-  await publicClient.waitForTransactionReceipt({ hash });
-  return hash;
 }
 
-export async function cancelMatch(matchId: Hex): Promise<Hex> {
-  const hash = await walletClient.writeContract({
-    chain: arcTestnet,
-    account: operatorAccount,
-    address: contractAddress(),
-    abi: escrowAbi,
-    functionName: "cancelMatch",
-    args: [matchId],
+export function settleMatch(
+  matchId: Hex,
+  winner: Address,
+  startPrice: bigint,
+  endPrice: bigint
+): Promise<Hex> {
+  return enqueueTx(async () => {
+    const hash = await walletClient.writeContract({
+      chain: arcTestnet,
+      account: operatorAccount,
+      address: contractAddress(),
+      abi: escrowAbi,
+      functionName: "settleMatch",
+      args: [matchId, winner, startPrice, endPrice],
+    });
+    await publicClient.waitForTransactionReceipt({ hash });
+    console.log(`[chain] settleMatch tx: ${hash} winner=${winner}`);
+    return hash;
   });
-  await publicClient.waitForTransactionReceipt({ hash });
-  return hash;
+}
+
+export function cancelMatch(matchId: Hex): Promise<Hex> {
+  return enqueueTx(async () => {
+    const hash = await walletClient.writeContract({
+      chain: arcTestnet,
+      account: operatorAccount,
+      address: contractAddress(),
+      abi: escrowAbi,
+      functionName: "cancelMatch",
+      args: [matchId],
+    });
+    await publicClient.waitForTransactionReceipt({ hash });
+    return hash;
+  });
+}
+
+const erc20TransferAbi = [
+  {
+    type: "function" as const,
+    name: "transfer",
+    inputs: [
+      { name: "to", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+    stateMutability: "nonpayable" as const,
+  },
+] as const;
+
+export function refundPlayer(playerAddress: Address, amount: bigint): Promise<Hex> {
+  return enqueueTx(async () => {
+    const usdcAddress = env.usdcAddress as Address;
+    const hash = await walletClient.writeContract({
+      chain: arcTestnet,
+      account: operatorAccount,
+      address: usdcAddress,
+      abi: erc20TransferAbi,
+      functionName: "transfer",
+      args: [playerAddress, amount],
+    });
+    await publicClient.waitForTransactionReceipt({ hash });
+    console.log(`[chain] Refunded ${amount} USDC to ${playerAddress}, tx: ${hash}`);
+    return hash;
+  });
 }
 
 function listenEvents() {
@@ -157,12 +240,11 @@ function listenEvents() {
         if (!matchId || !player1 || !player2) continue;
         console.log(`[chain] MatchCreated: ${matchId}`);
 
+        // Only update if still in CREATED state (match.service may have already advanced to LOCKED)
         await prisma.match.updateMany({
-          where: { onchainMatchId: matchId },
+          where: { onchainMatchId: matchId, state: "CREATED" },
           data: { state: "AWAITING_PLAYERS" },
         });
-        sseService.sendToWallet(player1, "match_created", { matchId, opponent: player2, entryFee: entryFee?.toString() });
-        sseService.sendToWallet(player2, "match_created", { matchId, opponent: player1, entryFee: entryFee?.toString() });
       }
     },
   });
@@ -210,6 +292,9 @@ function listenEvents() {
           include: { player1: true, player2: true },
         });
         if (!match) continue;
+
+        // Skip if match.service already advanced past this state
+        if (match.state === "LOCKED" || match.state === "PLAYING") continue;
 
         await prisma.match.update({
           where: { id: match.id },

@@ -27,6 +27,25 @@ export interface GameStartingEvent {
   matchId: string
   startPrice: number
   duration: number
+  observationDuration: number
+  drawingDuration: number
+  resolutionDuration: number
+}
+
+export interface DrawingPointData {
+  timestamp: number
+  price: number
+}
+
+export interface ResolutionPhaseEvent {
+  matchId: string
+  resolutionDuration: number
+  opponentDrawing: DrawingPointData[] | null
+}
+
+export interface DrawingPhaseEvent {
+  matchId: string
+  drawingDuration: number
 }
 
 export interface PriceTickEvent {
@@ -64,6 +83,8 @@ export type SSEEventMap = {
   player_entered: PlayerEnteredEvent
   match_locked: MatchLockedEvent
   game_starting: GameStartingEvent
+  drawing_phase: DrawingPhaseEvent
+  resolution_phase: ResolutionPhaseEvent
   price_tick: PriceTickEvent
   drawing_submitted: DrawingSubmittedEvent
   calculating: CalculatingEvent

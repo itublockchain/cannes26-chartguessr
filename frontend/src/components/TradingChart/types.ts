@@ -102,7 +102,7 @@ export function resolveGameConfig(
   const obs =
     partial?.observationSeconds ?? partial?.predictionWindowSeconds ?? 45;
   const tah = partial?.tahminPhaseSeconds ?? 15;
-  const brush = partial?.brushTargetSeconds ?? 60;
+  const brush = partial?.brushTargetSeconds ?? 15;
   const total = obs + tah + brush;
 
   return {
@@ -161,6 +161,8 @@ export interface TradingChartProps {
   wsUrl: string;
   coin?: string;
   gameConfig?: TradingChartGameConfig;
+  /** SSE-driven phase override: 1=observing, 2=drawing, 3=resolution */
+  externalPhase?: 1 | 2 | 3;
   /** Yalnızca fırça stroke tamamlandığında; trend/yatay çizimler tetiklemez. */
   onDrawingComplete?: (points: DrawingPoint[]) => void;
   onGameStateChange?: (state: "drawing" | "locked" | "scored") => void;

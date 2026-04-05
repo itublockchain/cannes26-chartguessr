@@ -8,16 +8,17 @@ datasource db {
 }
 
 model User {
-  id            String    @id @default(uuid())
-  walletAddress String    @unique
-  dynamicUserId String?   @unique
-  username      String?
-  characterId   String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  matchesAsP1   Match[]   @relation("Player1")
-  matchesAsP2   Match[]   @relation("Player2")
-  drawings      Drawing[]
+  id              String    @id @default(uuid())
+  walletAddress   String    @unique
+  dynamicUserId   String?   @unique
+  username        String?
+  characterId     String?
+  delegateActive  Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  matchesAsP1     Match[]   @relation("Player1")
+  matchesAsP2     Match[]   @relation("Player2")
+  drawings        Drawing[]
 }
 
 model Character {

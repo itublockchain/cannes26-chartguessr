@@ -8,8 +8,10 @@ type MatchDrawingForScore = {
 };
 
 const DRAW_THRESHOLD = 0.01;
-const MIN_COVERAGE = 0.9; // Drawing must cover at least 90% of the game duration
-const GAME_DURATION = 60; // seconds
+const MIN_COVERAGE = 0.3; // Drawing must cover at least 30% of the prediction window
+const OBSERVATION_DURATION = 45; // seconds — watch phase
+const DRAWING_PHASE_DURATION = 15; // seconds — drawing phase
+const RESOLUTION_DURATION = 60; // seconds — prediction window (scored against actual)
 
 export async function calculateScore(
   matchId: string,
@@ -28,7 +30,15 @@ export async function calculateScore(
   if (!match) throw new Error("Match not found");
   if (!match.priceBuffer) throw new Error("No price buffer");
 
-  const actualCurve = match.priceBuffer as unknown as PricePoint[];
+  const fullBuffer = match.priceBuffer as unknown as PricePoint[];
+
+  // Extract the resolution-phase portion (last 60s) of the price buffer
+  // This is the period the drawings predict: T0+60 to T0+120
+  const bufferStart = fullBuffer.length > 0 ? fullBuffer[0].timestamp : 0;
+  const resolutionStart = bufferStart + OBSERVATION_DURATION + DRAWING_PHASE_DURATION;
+  const actualCurve = fullBuffer.filter((p) => p.timestamp >= resolutionStart);
+
+  if (actualCurve.length === 0) throw new Error("No price data for resolution phase");
 
   const p1Drawing = match.drawings.find((d: MatchDrawingForScore) => d.userId === match.player1Id);
   const p2Drawing = match.drawings.find((d: MatchDrawingForScore) => d.userId === match.player2Id);
@@ -36,11 +46,22 @@ export async function calculateScore(
   const p1Path = p1Drawing ? (p1Drawing.pathData as unknown as DrawingPoint[]) : null;
   const p2Path = p2Drawing ? (p2Drawing.pathData as unknown as DrawingPoint[]) : null;
 
+  console.log(`[scoring] Match ${matchId}: p1 drawing ${p1Path ? `${p1Path.length} points` : "NONE"}, p2 drawing ${p2Path ? `${p2Path.length} points` : "NONE"}`);
+  if (p1Path && p1Path.length >= 2) {
+    const span = p1Path[p1Path.length - 1].timestamp - p1Path[0].timestamp;
+    console.log(`[scoring] p1 span: ${span}s (need ${RESOLUTION_DURATION * MIN_COVERAGE}s)`);
+  }
+  if (p2Path && p2Path.length >= 2) {
+    const span = p2Path[p2Path.length - 1].timestamp - p2Path[0].timestamp;
+    console.log(`[scoring] p2 span: ${span}s (need ${RESOLUTION_DURATION * MIN_COVERAGE}s)`);
+  }
+
   const p1Valid = p1Path && hasMinCoverage(p1Path);
   const p2Valid = p2Path && hasMinCoverage(p2Path);
 
   // No valid drawings → draw
   if (!p1Valid && !p2Valid) {
+    console.log(`[scoring] Neither drawing is valid — draw`);
     return { winner: ADDRESS_ZERO, player1Score: Infinity, player2Score: Infinity, isDraw: true };
   }
   // Only one valid → other wins
@@ -51,8 +72,8 @@ export async function calculateScore(
     return { winner: match.player1.walletAddress, player1Score: 0, player2Score: Infinity, isDraw: false };
   }
 
-  // Both valid — score them
-  const normalizedActual = normalizeTimeSeries(actualCurve, GAME_DURATION);
+  // Both valid — score them against the resolution-phase actual prices
+  const normalizedActual = normalizeTimeSeries(actualCurve, RESOLUTION_DURATION);
   const normalizedP1 = normalizeDrawingToActual(p1Path, normalizedActual);
   const normalizedP2 = normalizeDrawingToActual(p2Path, normalizedActual);
 
@@ -81,7 +102,7 @@ function hasMinCoverage(drawing: DrawingPoint[]): boolean {
   if (drawing.length < 2) return false;
 
   const drawingDuration = drawing[drawing.length - 1].timestamp - drawing[0].timestamp;
-  return drawingDuration >= GAME_DURATION * MIN_COVERAGE;
+  return drawingDuration >= RESOLUTION_DURATION * MIN_COVERAGE;
 }
 
 function normalizeTimeSeries(points: PricePoint[], count: number): PricePoint[] {
