@@ -53,6 +53,8 @@ export function applyDrawingConstraints(
   gameConfigRef: React.MutableRefObject<ResolvedTradingChartGameConfig>,
   /** Shift+B “chart debug”: faz kilidi olmadan fırça (koordinat bandı geçerli) */
   chartDebugModeRef: React.MutableRefObject<boolean>,
+  /** SSE-driven drawing phase: bypass candle-timestamp temporal gate */
+  externalDrawingPhaseRef?: React.MutableRefObject<boolean>,
 ) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const patchAddPoint = (proto: any) => {
@@ -93,7 +95,6 @@ export function applyDrawingConstraints(
         const lt = lastTimeRef.current;
 
         if (
-          lt === null ||
           tObs === null ||
           tTah === null ||
           tBrushEnd === null ||
@@ -101,19 +102,22 @@ export function applyDrawingConstraints(
         ) {
           return false;
         }
+        // When SSE says we're in drawing phase, bypass candle-timestamp temporal gate
+        const externalDrawing = externalDrawingPhaseRef?.current === true;
         // Chart debug (Shift+B): faz kilidi yok. Kapalı: yalnızca tahmin penceresi (phase 2).
-        if (!chartDebugModeRef.current && (lt < tObs || lt >= tTah)) return false;
+        if (!externalDrawing && !chartDebugModeRef.current && (lt === null || lt < tObs || lt >= tTah)) return false;
 
+        // Drawing is constrained to the right side: [tObs, tBrushEnd]
         const isUnixTs = ts > 1_000_000_000;
         if (isUnixTs) {
-          return ts >= tTah && ts <= tBrushEnd;
+          return ts >= tObs && ts <= tBrushEnd;
         }
 
         if (gameStartLogicalRef.current !== null) {
           const lo = gameStartLogicalRef.current;
-          const barTah = lo + cfg().tahminEndOffsetBars;
+          const barObs = lo + cfg().observationSeconds;
           const barEnd = lo + cfg().brushZoneEndOffsetBars;
-          return ts >= barTah && ts <= barEnd;
+          return ts >= barObs && ts <= barEnd;
         }
         return false;
       };

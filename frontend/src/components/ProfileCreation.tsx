@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
+import { AvatarCubeThumb, AvatarCubePreview } from './AvatarCube';
 
 const AVATARS = [
-  { id: 'shiba', label: 'Shiba' },
-  { id: 'husky', label: 'Husky' },
-  { id: 'fox', label: 'Fox' },
+  { id: 'blaze', label: 'Blaze' },
+  { id: 'frost', label: 'Frost' },
+  { id: 'ember', label: 'Ember' },
 ];
 
 export interface ProfileCreationProps {
@@ -26,7 +27,7 @@ export const ProfileCreation: React.FC<ProfileCreationProps> = ({ onProfileSaved
   const progress = isSaving ? 100 : nickname.trim() ? 66 : 33;
 
   return (
-    <div className="fixed inset-0 z-50 bg-background flex flex-col">
+    <div className="fixed inset-0 z-50 bg-background flex flex-col overflow-hidden">
       {/* Progress bar */}
       <div className="w-full px-10 pt-8">
         <div className="w-full max-w-[480px] mx-auto h-2 bg-border rounded-full overflow-hidden">
@@ -37,10 +38,14 @@ export const ProfileCreation: React.FC<ProfileCreationProps> = ({ onProfileSaved
         </div>
       </div>
 
-      {/* Main layout */}
-      <div className="flex-1 flex items-center justify-center px-10">
-        <div className="flex flex-col items-center w-full max-w-[440px]">
+      {/* Selected cube — fixed bottom-left, responsive size */}
+      <div className="fixed z-[40] pointer-events-none" style={{ bottom: '2vmin', left: '1vmin', width: 'clamp(160px, 40vw, 560px)', height: 'clamp(160px, 40vw, 560px)' }}>
+        <AvatarCubePreview avatarId={selectedAvatar.id} />
+      </div>
 
+      {/* Main layout — centered form */}
+      <div className="flex-1 flex items-center justify-center px-10">
+        <div className="flex flex-col items-center w-full" style={{ maxWidth: 'clamp(300px, 35vw, 440px)' }}>
           <div className="w-full mb-6">
             <h2 className="text-lg font-bold text-foreground mb-3">Choose a nickname</h2>
             <input
@@ -60,13 +65,16 @@ export const ProfileCreation: React.FC<ProfileCreationProps> = ({ onProfileSaved
                 <button
                   key={avatar.id}
                   onClick={() => setSelectedAvatar(avatar)}
-                  className={`h-12 rounded-xl border-2 bg-card flex items-center justify-center cursor-pointer transition-all duration-150 hover:-translate-y-0.5 ${
+                  className={`rounded-xl border-2 bg-card flex flex-col items-center justify-center cursor-pointer transition-all duration-150 hover:-translate-y-0.5 p-2 ${
                     selectedAvatar.id === avatar.id
                       ? 'border-accent shadow-[0_0_12px_hsl(var(--accent)/0.3)] text-accent font-semibold'
                       : 'border-border text-muted-foreground hover:border-muted-foreground'
                   }`}
                 >
-                  <span className="text-base">{avatar.label}</span>
+                  <div className="w-full" style={{ height: 'clamp(56px, 6vw, 80px)' }}>
+                    <AvatarCubeThumb avatarId={avatar.id} />
+                  </div>
+                  <span className="text-sm mt-1">{avatar.label}</span>
                 </button>
               ))}
             </div>
@@ -75,7 +83,8 @@ export const ProfileCreation: React.FC<ProfileCreationProps> = ({ onProfileSaved
           <button
             onClick={handleSave}
             disabled={!nickname.trim() || isSaving}
-            className="mt-2 w-full h-[54px] rounded-full bg-accent text-accent-foreground text-base font-bold cursor-pointer flex items-center justify-center transition-all duration-150 hover:bg-accent/90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+            className="mt-2 w-full rounded-full bg-accent text-accent-foreground text-base font-bold cursor-pointer flex items-center justify-center transition-all duration-150 hover:bg-accent/90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ height: 'clamp(44px, 4.5vw, 54px)' }}
           >
             {isSaving ? 'Saving...' : 'Save Profile'}
           </button>

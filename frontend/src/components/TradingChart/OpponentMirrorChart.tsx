@@ -1,14 +1,22 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   type CSSProperties,
   type MutableRefObject,
 } from "react";
+import type {
+  IChartApiBase,
+  ISeriesApi,
+  SeriesType,
+  UTCTimestamp,
+} from "lightweight-charts";
 import { useChartSetup } from "./hooks/useChartSetup";
 import { useMirrorWebSocket } from "./hooks/useMirrorWebSocket";
 import { useMirrorChartOverlays } from "./hooks/useMirrorChartOverlays";
-import { resolveGameConfig, type TradingChartGameConfig } from "./types";
+import { resolveGameConfig, type TradingChartGameConfig, type DrawingPoint } from "./types";
+import { drawingPointToPanePixel } from "./utils/devDrawingPointsCanvas";
 import type {
   ChartDualSync,
   MirrorGameWindow,
@@ -28,6 +36,8 @@ export interface OpponentMirrorChartProps {
     from: number;
     to: number;
   } | null> | null;
+  /** Opponent's drawing points to overlay on the chart */
+  opponentDrawing?: DrawingPoint[] | null;
 }
 
 /**
@@ -40,6 +50,7 @@ export function OpponentMirrorChart({
   gameWindow,
   dualSync,
   mainChartPriceRangeRef,
+  opponentDrawing,
 }: OpponentMirrorChartProps) {
   const gameConfig = useMemo(
     () => resolveGameConfig(gameConfigProp),
@@ -96,6 +107,89 @@ export function OpponentMirrorChart({
     gameConfig,
   );
 
+  // --- Opponent drawing overlay ---
+  const drawingCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  const redrawOpponentOverlay = useCallback(() => {
+    const chart = chartRef.current;
+    const series = seriesRef.current;
+    const shell = chartShellRef.current;
+    const canvas = drawingCanvasRef.current;
+    if (!chart || !series || !shell || !canvas || !opponentDrawing || opponentDrawing.length === 0) {
+      if (canvas) {
+        const ctx = canvas.getContext("2d");
+        ctx?.clearRect(0, 0, canvas.width, canvas.height);
+      }
+      return;
+    }
+
+    const dpr = window.devicePixelRatio || 1;
+    const w = shell.clientWidth;
+    const h = shell.clientHeight;
+    if (w <= 0 || h <= 0) return;
+
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, w, h);
+
+    const panes = (chart as IChartApiBase<UTCTimestamp>).panes();
+    const paneEl = panes[0]?.getHTMLElement?.() ?? null;
+    if (!paneEl) return;
+
+    const shellRect = shell.getBoundingClientRect();
+    const paneRect = paneEl.getBoundingClientRect();
+    const ox = paneRect.left - shellRect.left;
+    const oy = paneRect.top - shellRect.top;
+
+    // Draw as a connected line
+    const pixels: { x: number; y: number }[] = [];
+    for (const p of opponentDrawing) {
+      const c = drawingPointToPanePixel(
+        chart as IChartApiBase<UTCTimestamp>,
+        series as ISeriesApi<SeriesType, UTCTimestamp>,
+        p.timestamp,
+        p.price,
+      );
+      if (c) pixels.push({ x: ox + c.x, y: oy + c.y });
+    }
+
+    if (pixels.length < 2) return;
+
+    ctx.strokeStyle = "rgba(239, 68, 68, 0.9)"; // red for opponent
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(pixels[0].x, pixels[0].y);
+    for (let i = 1; i < pixels.length; i++) {
+      ctx.lineTo(pixels[i].x, pixels[i].y);
+    }
+    ctx.stroke();
+  }, [chartRef, seriesRef, opponentDrawing]);
+
+  // Redraw on chart time scale changes & crosshair moves
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !opponentDrawing || opponentDrawing.length === 0) return;
+
+    redrawOpponentOverlay();
+
+    const tsUnsub = chart.timeScale().subscribeVisibleLogicalRangeChange(redrawOpponentOverlay);
+    const chUnsub = chart.subscribeCrosshairMove(redrawOpponentOverlay);
+    return () => {
+      tsUnsub();
+      chUnsub();
+    };
+  }, [chartRef, opponentDrawing, redrawOpponentOverlay]);
+
   return (
     <div className={styles.opponentMirrorRoot}>
       <div className={styles.chartInfoBar} aria-label="Trading pair">
@@ -134,6 +228,11 @@ export function OpponentMirrorChart({
             className={`${styles.chart} ${styles.chartScrollLocked}`}
             tabIndex={-1}
             aria-label="Grafik — fırça çizimi yok"
+          />
+          <canvas
+            ref={drawingCanvasRef}
+            className={styles.drawingDebugCanvas}
+            aria-hidden
           />
         </div>
       </div>

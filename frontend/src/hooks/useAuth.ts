@@ -8,16 +8,17 @@ interface AuthState {
   token: string | null
   profile: UserProfile | null
   loading: boolean
+  delegateActive: boolean
 }
 
 export function useAuth() {
   const isLoggedIn = useIsLoggedIn()
-  const [state, setState] = useState<AuthState>({ token: null, profile: null, loading: true })
+  const [state, setState] = useState<AuthState>({ token: null, profile: null, loading: true, delegateActive: false })
   const verifyingRef = useRef(false)
 
   useEffect(() => {
     if (!isLoggedIn) {
-      setState({ token: null, profile: null, loading: false })
+      setState({ token: null, profile: null, loading: false, delegateActive: false })
       return
     }
 
@@ -49,18 +50,20 @@ export function useAuth() {
         const profileRes = await fetch(`${API_BASE}/user/profile`, {
           headers: { Authorization: `Bearer ${backendToken}` },
         })
+        let delegateActive = false
         if (profileRes.ok) {
           const { user } = await profileRes.json()
           if (user.username && user.characterId) {
             profile = { nickname: user.username, avatar: user.characterId }
           }
+          delegateActive = !!user.delegateActive
         }
 
         // 3. Set everything in one update
-        setState({ token: backendToken, profile, loading: false })
+        setState({ token: backendToken, profile, loading: false, delegateActive })
       } catch (err) {
         console.error('[Auth] Verification failed:', err)
-        setState({ token: null, profile: null, loading: false })
+        setState({ token: null, profile: null, loading: false, delegateActive: false })
       } finally {
         verifyingRef.current = false
       }
@@ -83,5 +86,21 @@ export function useAuth() {
     setState(s => ({ ...s, profile: { nickname, avatar } }))
   }, [state.token])
 
-  return { token: state.token, profile: state.profile, loading: state.loading, saveProfile }
+  const markDelegateActive = useCallback(async () => {
+    if (!state.token) return
+    await fetch(`${API_BASE}/user/delegate-confirmed`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${state.token}` },
+    })
+    setState(s => ({ ...s, delegateActive: true }))
+  }, [state.token])
+
+  return {
+    token: state.token,
+    profile: state.profile,
+    loading: state.loading,
+    delegateActive: state.delegateActive,
+    saveProfile,
+    markDelegateActive,
+  }
 }

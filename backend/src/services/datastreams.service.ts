@@ -36,6 +36,7 @@
 import { env } from "../config/env.js";
 import type { PriceReport, PricePoint } from "../types/index.js";
 import * as sseService from "./sse.service.js";
+import * as wsService from "./ws.service.js";
 
 const BTC_USD_FEED_ID = env.btcUsdFeedId || "0x00039d9e45394f473ab1f050a1b963e6b05351e52d71e507509ada0c95ed75b8";
 const DECIMALS = 1e18;
@@ -119,6 +120,18 @@ export function init(): void {
         const data = JSON.parse(event.data as string);
         if (data.k) {
           onReport(binanceToReport(data));
+
+          // Relay raw candle to frontend WebSocket clients
+          const k = data.k;
+          wsService.pushCandle({
+            time: Math.floor(k.t / 1000),
+            open: parseFloat(k.o),
+            high: parseFloat(k.h),
+            low: parseFloat(k.l),
+            close: parseFloat(k.c),
+            volume: parseFloat(k.v),
+            trades: k.n ?? 0,
+          });
         }
       } catch {
         // ignore parse errors

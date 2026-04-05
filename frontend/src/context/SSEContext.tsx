@@ -19,6 +19,8 @@ const SSE_EVENTS: SSEEventType[] = [
   'player_entered',
   'match_locked',
   'game_starting',
+  'drawing_phase',
+  'resolution_phase',
   'price_tick',
   'drawing_submitted',
   'calculating',
